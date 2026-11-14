@@ -4,6 +4,17 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-11-14
+
+### Fixed
+
+- Narrative references: the text behind a `<reference value="#id"/>` is read once per id
+  and shared by every entry that points at it. A document whose entries all referenced one
+  large paragraph took time and memory proportional to entries × paragraph size.
+- `system_uri`: an HL7 v2 table OID whose table number is a non-ASCII digit (such as `²`,
+  which `str.isdigit` accepts and `int` rejects) is returned as `urn:oid:` instead of
+  raising `ValueError`.
+
 ## [0.2.0] - 2026-11-03
 
 ### Added
