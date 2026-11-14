@@ -92,7 +92,8 @@ def system_uri(oid: str | None, unmapped: set[str] | None = None) -> str | None:
         return oid
     if oid.startswith(_V2_TABLE_PREFIX):
         table = oid[len(_V2_TABLE_PREFIX) :]
-        if table.isdigit():
+        # isdigit alone also accepts digits such as "²" that int() rejects
+        if table.isascii() and table.isdigit():
             return f"http://terminology.hl7.org/CodeSystem/v2-{int(table):04d}"
     if unmapped is not None:
         unmapped.add(oid)

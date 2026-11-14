@@ -66,3 +66,48 @@ def test_missing_file():
 def test_good_document_still_parses():
     bundle, _ = convert_bytes(HANDWRITTEN.read_bytes(), "inline.xml")
     assert len(bundle["entry"]) > 10
+
+
+def test_referenced_narrative_is_resolved_once(monkeypatch):
+    """Entries that point at the same narrative share one resolved string."""
+    from healthrecord_bridge.ccda import narrative
+
+    calls = []
+    original = narrative.text_of
+
+    def counting_text_of(el):
+        calls.append(el)
+        return original(el)
+
+    monkeypatch.setattr(narrative, "text_of", counting_text_of)
+    entry = (
+        '<entry><substanceAdministration classCode="SBADM" moodCode="EVN">'
+        '<text><reference value="#sig"/></text><statusCode code="active"/>'
+        "<consumable><manufacturedProduct><manufacturedMaterial/>"
+        "</manufacturedProduct></consumable></substanceAdministration></entry>"
+    )
+    doc = (
+        '<?xml version="1.0"?><ClinicalDocument xmlns="urn:hl7-org:v3"><id root="1.2.3"/>'
+        "<recordTarget><patientRole><patient><name><given>A</given></name></patient>"
+        "</patientRole></recordTarget><component><structuredBody><component><section>"
+        '<code code="10160-0"/><text><paragraph ID="sig">Take one daily</paragraph></text>'
+        + entry * 50
+        + "</section></component></structuredBody></component></ClinicalDocument>"
+    )
+    bundle, _ = convert_bytes(doc.encode())
+    texts = [
+        e["resource"]["dosage"][0]["text"]
+        for e in bundle["entry"]
+        if e["resource"]["resourceType"] == "MedicationStatement"
+    ]
+    assert len(texts) == 50 and set(texts) == {"Take one daily"}
+    assert len({id(t) for t in texts}) == 1
+    assert len([el for el in calls if el.get("ID") == "sig"]) == 1
+
+
+def test_v2_table_oid_with_non_ascii_digit_does_not_crash():
+    """str.isdigit accepts superscripts that int() rejects."""
+    from healthrecord_bridge.ccda.codes import system_uri
+
+    assert system_uri("2.16.840.1.113883.12.²") == "urn:oid:2.16.840.1.113883.12.²"
+    assert system_uri("2.16.840.1.113883.12.1") == "http://terminology.hl7.org/CodeSystem/v2-0001"

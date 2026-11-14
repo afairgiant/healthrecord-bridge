@@ -20,6 +20,9 @@ class NarrativeIndex:
     def __init__(self, root: etree._Element) -> None:
         self._root = root
         self._index: dict[str, etree._Element] | None = None
+        # Resolved text per id: a narrative paragraph that many entries point at
+        # is read once and the entries share one string
+        self._texts: dict[str, str | None] = {}
 
     def _build(self) -> dict[str, etree._Element]:
         index: dict[str, etree._Element] = {}
@@ -39,8 +42,10 @@ class NarrativeIndex:
         if self._index is None:
             self._index = self._build()
         key = reference[1:] if reference.startswith("#") else reference
-        el = self._index.get(key)
-        return text_of(el) if el is not None else None
+        if key not in self._texts:
+            el = self._index.get(key)
+            self._texts[key] = text_of(el) if el is not None else None
+        return self._texts[key]
 
 
 def referenced_text(el: etree._Element | None, index: NarrativeIndex) -> str | None:
