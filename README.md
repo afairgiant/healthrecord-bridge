@@ -97,17 +97,27 @@ person. `hrb anonymize` rewrites one C-CDA XML file into a copy that keeps the c
 content and the document structure but not the identity:
 
 ```sh
-hrb anonymize DOC0001.XML fixture.xml --seed my-seed --report anonymize.json
+hrb anonymize DOC0001.XML fixture.xml --report anonymize.json
 ```
 
 What it changes:
 
 - Every HL7 timestamp (`effectiveTime`, `low`, `high`, `time`, `birthTime`, ...) is moved by
   the same number of days, between 30 and 730 in either direction, derived from the seed.
-  Precision is kept, so intervals between dates survive. The birth date is additionally
+  Precision is kept, so intervals between dates survive. A year-month timestamp (`201905`)
+  moves from the middle of its month, so the month always changes; a year-only timestamp
+  (`1985`) moves by the shift in whole years, at least one. The birth date is additionally
   rounded to January 1 of its shifted year.
-- Every `<id>` extension (and any root that is not an OID) becomes a stable hash of the
-  seed and the original value, so the same identifier still maps to the same output
+- Dates written in text, in narrative, values and `displayName` alike, are moved by the
+  same number of days and keep their format: `03/14/2023`, `3-14-23`, `2023-03-14`,
+  `2023/03/14`, `03.14.2023`, `Mar 14, 2023`, `March 14th, 2023`, `14 March 2023`,
+  `14-MAR-2023`, `March 2023`, `03/2023` and `2023-03`. A bare year is moved only after a
+  word such as "in", "since" or "diagnosed" ("diagnosed 2019"). A date labelled as a birth
+  date (`DOB`, `date of birth`, `born`) is rounded to January 1 like `birthTime`. Day-first
+  dates are not recognised: one that only makes sense day-first (such as `14/03/2023`) is
+  left alone and listed as a residual finding.
+- Every `<id>` extension (and any root that is not an OID) becomes a keyed hash (HMAC) of
+  the original value, so the same identifier still maps to the same output
   everywhere in the document. Runs of nine or more digits inside OID roots and narrative
   `ID` attributes (Epic record numbers) are hashed too, with references following.
 - Epic customer OIDs (`1.2.840.114350.1.13.<customer>...`) get customer number `0` wherever
@@ -116,27 +126,42 @@ What it changes:
   guardians, custodians) becomes Pat Clinician at Example Health System, with a fixed
   address and `tel:+1-555-0100` / `mailto:patient@example.com` telecoms. A name or address
   that carries a `nullFlavor` but still has content is replaced the same way.
-- Every text node in the document has the names seen in the header replaced with the same
-  substitutes; in section narrative, titles and `originalText`, phone numbers, email
-  addresses, `MRN: 12345` and `NPI: 1234567890` patterns are blanked as well.
+- Every text node in the document, narrative or not (an `ST` result value, a `desc`), has
+  the names seen in the header replaced with the same substitutes, and phone numbers, email
+  addresses, `MRN: 12345` and `NPI: 1234567890` patterns blanked.
+- Embedded files (an element with `representation="B64"` or a non-text `mediaType`: a
+  scanned document in `nonXMLBody`, an `observationMedia` image, an attached PDF) cannot be
+  scrubbed, so the content is replaced with a short placeholder; `mediaType` and any
+  `reference` stay, thumbnails go. When the whole body is such a file the output has no
+  clinical content left, and the command says so; a plain-text `nonXMLBody` is scrubbed
+  like narrative, with a warning to read it.
 
 Codes, code systems, units, measurement values and the narrative tables are left as they
 are, so the converter produces the same resources from the scrubbed file as from the
 original. The same seed always gives byte-identical output; without `--seed` a random seed
-is used and printed.
+is used and printed to stderr.
+
+**Treat the seed as a secret.** Anyone who has the seed can recompute the day shift and test
+guesses of an identifier (an MRN is only a few million possibilities) against the hashes in
+the output. Prefer the random default, keep a seed you need for reproducibility private, and
+never publish it next to the output. The report written by `--report` leaves the day shift
+out for the same reason, so it can be shared with the output.
 
 The scrubber only knows the names that appear in structured header elements. Free text can
 mention relatives, employers, other clinicians or places it has never seen, so a person
 must still read the whole output before sharing it. The report lists `residual_findings`
-(long digit runs, phone and email shapes that survived scrubbing) as a starting point, and
-the command warns on stderr when that list is not empty.
+(long digit runs, phone and email shapes and unshifted dates that survived scrubbing) as a
+starting point, and the command warns on stderr when that list is not empty.
 
 ```python
+import secrets
+
 from healthrecord_bridge.ccda.anonymize import anonymize, anonymize_file
 
-scrubbed, report = anonymize(xml_bytes, seed="my-seed")
-report = anonymize_file("DOC0001.XML", "fixture.xml", seed="my-seed")
-print(report.day_shift, report.residual_findings)
+seed = secrets.token_hex(16)  # keep it private
+scrubbed, report = anonymize(xml_bytes, seed=seed)
+report = anonymize_file("DOC0001.XML", "fixture.xml", seed=seed)
+print(report.residual_findings, report.binary_payloads_removed, report.non_xml_body)
 ```
 
 ## Making a synthetic fixture from a real export
@@ -147,7 +172,7 @@ piece of clinical content with made-up data from built-in tables, so what is lef
 shape of the export and nothing else:
 
 ```sh
-hrb synthesize DOC0001.XML fixture.xml --seed my-seed --report synthesize.json
+hrb synthesize DOC0001.XML fixture.xml --report synthesize.json
 ```
 
 What it keeps: every section, entry and element, in the same order; template ids,
@@ -175,7 +200,8 @@ and hashed codes; sections the converter does not recognise get the same treatme
 listed in the report under `unrecognized_sections`.
 
 All choices come from a generator seeded with `--seed`, so the same seed gives
-byte-identical output; without a seed a random one is used and printed. Nothing leaves your
+byte-identical output; without a seed a random one is used and printed. The seed is a
+secret here too, since it also drives the anonymizer. Nothing leaves your
 machine: there is no network access and no model involved. The converter produces the same
 number of resources of each type from the synthetic file as from the original.
 
@@ -188,8 +214,8 @@ unrecognized sections, is not empty.
 ```python
 from healthrecord_bridge.ccda.synthesize import synthesize, synthesize_file
 
-synthetic, report = synthesize(xml_bytes, seed="my-seed")
-report = synthesize_file("DOC0001.XML", "fixture.xml", seed="my-seed")
+synthetic, report = synthesize(xml_bytes)  # random seed
+report = synthesize_file("DOC0001.XML", "fixture.xml")
 print(report.summary(), report.entries_replaced, report.unrecognized_sections)
 ```
 

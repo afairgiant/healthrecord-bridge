@@ -9,7 +9,6 @@ byte-identical output. No network, no model.
 
 from __future__ import annotations
 
-import hashlib
 import math
 import random
 import re
@@ -19,7 +18,7 @@ from pathlib import Path
 
 from lxml import etree
 
-from .anonymize import SUBSTITUTES, AnonymizeReport, anonymize
+from .anonymize import SUBSTITUTES, AnonymizeReport, anonymize, keyed_hash, seeded_key
 from .document import CdaDocument, Section, parse_xml
 from .mappers._shared import statement_of
 from .sections import KNOWN_UNMAPPED, find_spec
@@ -998,9 +997,8 @@ class _Row:
 
 class _Synthesizer:
     def __init__(self, seed: str, report: SynthesizeReport) -> None:
-        self.seed = seed
-        digest = hashlib.sha256(seed.encode("utf-8")).digest()
-        self.rng = random.Random(int.from_bytes(digest, "big"))
+        self.hash_key = seeded_key(seed, "synthesize/hash")
+        self.rng = random.Random(int.from_bytes(seeded_key(seed, "synthesize/rng"), "big"))
         self.report = report
         self.tokens: set[str] = set()
         self.emitted: set[str] = {REMOVED, NARRATIVE_REMOVED, *_HEADER, *SUBSTITUTES}
@@ -1068,7 +1066,7 @@ class _Synthesizer:
     # ---- helpers ------------------------------------------------------------------
 
     def _hash(self, original: str) -> str:
-        return hashlib.sha256((self.seed + original).encode("utf-8")).hexdigest()[:12]
+        return keyed_hash(self.hash_key, original).hex()[:12]
 
     def _draw(self, low: float, high: float, decimals: int) -> str:
         if decimals == 0:

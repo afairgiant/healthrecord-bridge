@@ -6,7 +6,49 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Anonymizer and synthesizer: identifier hashes, the day shift and the synthesizer's random
+  choices are now HMAC-SHA256 keyed from the seed, one key per purpose, instead of
+  `sha256(seed + value)`. A short identifier such as an MRN can no longer be recovered by
+  hashing guesses unless the seed is known. The same seed still gives the same output, but
+  no longer the same output as 0.2.1.
+- The anonymize report (`--report`, `AnonymizeReport.to_dict()`, and the `anonymize` part of
+  the synthesize report) no longer contains `day_shift`, which undid the date shift for
+  anyone holding the report. `AnonymizeReport.day_shift` is still set in Python. The
+  terminal summary no longer prints it either.
+- `hrb anonymize` and `hrb synthesize` print a random seed to stderr with a reminder to
+  keep it private, and no longer echo a seed passed with `--seed`. The README treats the
+  seed as a secret.
+
+### Added
+
+- Anonymize report fields `dates_in_text_shifted`, `binary_payloads_removed` and
+  `non_xml_body` (`null`, `"file"` when an embedded-file body was replaced, or `"text"`).
+
 ### Fixed
+
+- Anonymizer: year-only and year-month timestamps (`<birthTime value="1985"/>`,
+  `<effectiveTime value="201905"/>`) kept their real values. They are now shifted: a
+  year-month value from the 15th of its month, a year-only value by the shift in whole
+  years, at least one. Numbers that look like years (PQ, INT and range values) are left
+  alone.
+- Anonymizer: dates written in text and in `displayName` were not shifted. Day, month-year
+  and (after words such as "in" or "diagnosed") bare-year dates in common US, ISO and
+  month-name formats now move by the day shift in their own format; dates labelled as a
+  birth date are rounded to January 1 like `birthTime`; a date that only makes sense
+  day-first is reported as a residual finding.
+- Anonymizer: a full 8-digit value on a numeric element (`INT`, `PQ` with a unit) was
+  shifted as if it were a date.
+- Anonymizer: phone numbers, email addresses, MRNs and NPIs were only scrubbed in section
+  narrative, titles and `originalText`, and the residual check only looked there. Both now
+  cover every text node, so an `ST` result value or a `desc` is scrubbed and checked too.
+- Anonymizer and synthesizer: embedded files (`nonXMLBody`, `observationMedia`, base64
+  `ED` values) passed through untouched and could hold a whole unredacted document. Any
+  element with `representation="B64"` or a non-text `mediaType` now has all of its content
+  replaced with a placeholder, including data after a `reference` child (thumbnails and
+  `compression`/`integrityCheck` are dropped), and the CLI warns when the document body is
+  a `nonXMLBody`, saying whether it was removed or scrubbed as text.
 
 - `hrb --version` and `healthrecord_bridge.__version__` read the installed package version
   instead of a hardcoded string that had fallen behind (0.2.1 reported 0.2.0). The release

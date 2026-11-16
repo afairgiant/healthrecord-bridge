@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 from datetime import date
@@ -10,9 +12,22 @@ from pathlib import Path
 import pytest
 from lxml import etree
 
-from conftest import HANDWRITTEN, NS, XDM_SOURCE_XML
+from conftest import (
+    HANDWRITTEN,
+    NS,
+    PDF_B64,
+    XDM_SOURCE_XML,
+    non_xml_body_document,
+    run_cli,
+)
 from healthrecord_bridge.ccda import convert_bytes
-from healthrecord_bridge.ccda.anonymize import anonymize, anonymize_file, day_shift_for, shift_ts
+from healthrecord_bridge.ccda.anonymize import (
+    BINARY_PLACEHOLDER,
+    anonymize,
+    anonymize_file,
+    day_shift_for,
+    shift_ts,
+)
 from healthrecord_bridge.cli import main
 
 FIXTURES = [HANDWRITTEN, XDM_SOURCE_XML]
@@ -216,15 +231,17 @@ def test_report_has_no_residual_findings(pair):
     assert report.names_rewritten > 0
     assert report.addresses_rewritten > 0
     d = report.to_dict()
-    assert d["day_shift"] == report.day_shift
+    assert "day_shift" not in d  # sharing the report must not undo the date shift
     assert set(d) == {
-        "day_shift",
         "ids_rewritten",
         "oids_rewritten",
         "names_rewritten",
         "telecoms_rewritten",
         "addresses_rewritten",
         "narrative_replacements",
+        "dates_in_text_shifted",
+        "binary_payloads_removed",
+        "non_xml_body",
         "residual_findings",
     }
 
@@ -379,8 +396,8 @@ def test_cli_anonymize(tmp_path, capsys):
     rc = main(["anonymize", str(HANDWRITTEN), str(out), "--seed", "cli", "--report", str(rep)])
     assert rc == 0
     captured = capsys.readouterr()
-    assert "day shift" in captured.out and "seed cli" in captured.out
-    assert captured.err == ""
+    assert "residual findings 0" in captured.out
+    assert "seed" not in captured.out and captured.err == ""  # a given seed is not echoed
     expected = anonymize_file(HANDWRITTEN, tmp_path / "again.xml", seed="cli")
     assert out.read_bytes() == (tmp_path / "again.xml").read_bytes()
     assert json.loads(rep.read_text()) == expected.to_dict()
@@ -406,3 +423,310 @@ def test_cli_anonymize_error(tmp_path, capsys):
 
 def _days(yyyymmdd: str) -> int:
     return date(int(yyyymmdd[:4]), int(yyyymmdd[4:6]), int(yyyymmdd[6:8])).toordinal()
+
+
+# ---- partial-precision timestamps ---------------------------------------------------------
+
+ST_VALUE = b'<value xsi:type="ST">Specimen slightly hemolyzed</value>'
+MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+MONTH_FULL = [
+    "January", "February", "March", "April", "May", "June", "July",
+    "August", "September", "October", "November", "December",
+]  # fmt: skip
+
+
+def with_value(value: bytes) -> bytes:
+    """The handwritten fixture with the lab annotation's ST value replaced."""
+    data = HANDWRITTEN.read_bytes()
+    assert data.count(ST_VALUE) == 1
+    return data.replace(ST_VALUE, value)
+
+
+def lab_value(out: bytes) -> etree._Element:
+    for obs in etree.fromstring(out).iter(f"{{{NS['c']}}}observation"):
+        code = obs.find("c:code", NS)
+        if code is not None and code.get("code") == "48767-8":
+            return obs.find("c:value", NS)
+    raise AssertionError("annotation observation not found")
+
+
+def annotate(text: str, seed: str = "fixture-seed"):
+    """Anonymize the fixture with ``text`` as the annotation's ST value."""
+    out, report = anonymize(with_value(f'<value xsi:type="ST">{text}</value>'.encode()), seed=seed)
+    return lab_value(out).text, report
+
+
+def shifted_date(d: date, seed: str = "fixture-seed") -> date:
+    return date.fromordinal(d.toordinal() + day_shift_for(seed))
+
+
+@pytest.fixture(scope="module")
+def baseline():
+    """The report for the unmodified fixture, to compare counts against."""
+    return anonymize(HANDWRITTEN.read_bytes(), seed="fixture-seed")[1]
+
+
+@pytest.mark.parametrize("days", [30, 182, 183, 400, 730, -30, -182, -730])
+def test_shift_ts_year_only_always_moves(days):
+    shifted = int(shift_ts("2019", days, partial=True))
+    assert (shifted > 2019) == (days > 0)
+    assert abs(shifted - 2019) == max(1, round(abs(days) / 365))
+
+
+@pytest.mark.parametrize("days", [30, 31, -30, -31, 365, -730])
+@pytest.mark.parametrize("month", ["201901", "201902", "201912"])
+def test_shift_ts_year_month_always_moves(month, days):
+    shifted = shift_ts(month, days, partial=True)
+    got = date.fromordinal(date(int(month[:4]), int(month[4:]), 15).toordinal() + days)
+    assert shifted == f"{got.year:04d}{got.month:02d}" != month
+
+
+def test_shift_ts_partial_only_when_asked():
+    assert shift_ts("2019", 400) is None
+    assert shift_ts("201905+0500", 31, partial=True) == "201906+0500"
+    assert shift_ts("201913", 31, partial=True) is None
+
+
+def test_partial_birth_and_effective_times_are_shifted():
+    data = with_value(ST_VALUE).replace(
+        b'<birthTime value="19840722"/>', b'<birthTime value="1984"/>'
+    )
+    data = re.sub(
+        rb'<effectiveTime value="20240301073000-0600"/>(\s+' + re.escape(ST_VALUE) + rb")",
+        rb'<effectiveTime value="202403"/>\1',
+        data,
+    )
+    assert b'value="202403"' in data and b'<birthTime value="1984"/>' in data
+    out, report = anonymize(data, seed="fixture-seed")
+    birth = etree.fromstring(out).find(".//c:patient/c:birthTime", NS).get("value")
+    assert re.fullmatch(r"\d{4}", birth) and birth != "1984"
+    effective = lab_value(out).getparent().find("c:effectiveTime", NS).get("value")
+    assert effective == shift_ts("202403", day_shift_for("fixture-seed"), partial=True)
+    assert effective != "202403"
+    assert report.residual_findings == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        b'<value xsi:type="PQ" value="1985" unit="mL"/>',
+        b'<value xsi:type="INT" value="2019"/>',
+        b'<value xsi:type="IVL_INT"><low value="2019"/><high value="202012"/></value>',
+        b'<value xsi:type="INT" value="20190101"/>',
+        b'<value xsi:type="PQ" value="20190101" unit="/uL"/>',
+    ],
+)
+def test_numbers_that_look_like_dates_are_not_shifted(value):
+    out, _ = anonymize(with_value(value), seed="fixture-seed")
+    before = etree.fromstring(value.replace(b"xsi:type", b"type"))
+    after = lab_value(out)
+    assert [e.get("value") for e in before.iter()] == [e.get("value") for e in after.iter()]
+
+
+# ---- dates in text --------------------------------------------------------------------------
+
+
+def test_text_dates_are_shifted_in_their_own_format(baseline):
+    got, report = annotate(
+        "Seen on 03/14/2023, again 3/1/23, drawn 2023-03-14T10:00, "
+        "reviewed Mar 14, 2023 and March 2023, signed 14 March 2023."
+    )
+    d = shifted_date(date(2023, 3, 14))
+    first = shifted_date(date(2023, 3, 1))
+    mid = shifted_date(date(2023, 3, 15))
+    assert got == (
+        f"Seen on {d.month:02d}/{d.day:02d}/{d.year}, "
+        f"again {first.month}/{first.day}/{first.year % 100:02d}, "
+        f"drawn {d.isoformat()}T10:00, "
+        f"reviewed {MONTH_ABBR[d.month - 1]} {d.day}, {d.year} "
+        f"and {MONTH_FULL[mid.month - 1]} {mid.year}, "
+        f"signed {d.day} {MONTH_FULL[d.month - 1]} {d.year}."
+    )
+    assert report.dates_in_text_shifted == baseline.dates_in_text_shifted + 6
+    assert report.residual_findings == []
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("05-14-2020", "{m:02d}-{d:02d}-{y}"),
+        ("2020/05/14", "{y}/{m:02d}/{d:02d}"),
+        ("05.14.2020", "{m:02d}.{d:02d}.{y}"),
+        ("May 14th, 2020", "{B} {d}{th}, {y}"),
+        ("14-May-2020", "{d}-{B}-{y}"),
+        ("14-MAY-2020", "{d}-{BU}-{y}"),
+        ("June 5, 2020", "{B5} {d5}, {y5}"),
+    ],
+)
+def test_more_day_formats_are_shifted(text, expected):
+    got, report = annotate(f"Seen {text}.")
+    d = shifted_date(date(2020, 5, 14))
+    d5 = shifted_date(date(2020, 6, 5))
+    th = "th" if 10 <= d.day % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(d.day % 10, "th")
+    fields = {
+        "y": d.year, "m": d.month, "d": d.day, "th": th,
+        "B": MONTH_FULL[d.month - 1], "BU": MONTH_ABBR[d.month - 1].upper(),
+        "B5": MONTH_FULL[d5.month - 1], "d5": d5.day, "y5": d5.year,
+    }  # fmt: skip
+    assert got == f"Seen {expected.format(**fields)}."
+    assert report.residual_findings == []
+
+
+@pytest.mark.parametrize(
+    ("text", "fmt"),
+    [("05/2019", "{m:02d}/{y}"), ("2019-05", "{y}-{m:02d}"), ("May 2019", "{B} {y}")],
+)
+def test_month_year_formats_are_shifted(text, fmt):
+    got, _ = annotate(f"Since {text}")
+    mid = shifted_date(date(2019, 5, 15))
+    assert got == "Since " + fmt.format(y=mid.year, m=mid.month, B=MONTH_FULL[mid.month - 1])
+
+
+def test_bare_year_after_a_date_word_is_shifted():
+    got, _ = annotate("Diagnosed 2019, in 2018 too; platelets 2019 and in 2000 mL")
+    year = int(shift_ts("2019", day_shift_for("fixture-seed"), partial=True))
+    assert got.startswith(f"Diagnosed {year}, in {year - 1} too;")
+    assert got.endswith("platelets 2019 and in 2000 mL")
+
+
+@pytest.mark.parametrize(
+    "text", ["may 1500 mg", "Take 1/2 tab", "Visual acuity 20/20/20", "version 1.5.20"]
+)
+def test_text_that_is_not_a_date_is_left_alone_and_not_reported(text, baseline):
+    got, report = annotate(text)
+    assert got == text
+    assert report.dates_in_text_shifted == baseline.dates_in_text_shifted
+    assert report.residual_findings == []
+
+
+def test_birth_date_in_text_is_rounded_like_birth_time():
+    got, _ = annotate("DOB 07/22/1984; date of birth: July 22, 1984")
+    year = shifted_date(date(1984, 7, 22)).year
+    assert got == f"DOB 01/01/{year}; date of birth: January 1, {year}"
+
+
+def test_text_dates_in_narrative_follow_the_shift():
+    data = with_performer(b'<item ID="enc2">Seen on 03/14/2023</item>')
+    out, _ = anonymize(data, seed="fixture-seed")
+    item = etree.fromstring(out).find(".//c:item[@ID='enc2']", NS).text
+    d = shifted_date(date(2023, 3, 14))
+    assert item == f"Seen on {d.month:02d}/{d.day:02d}/{d.year}"
+
+
+def with_display_name(suffix: str) -> bytes:
+    return HANDWRITTEN.read_bytes().replace(
+        b'displayName="Annotation comment"', f'displayName="Annotation comment {suffix}"'.encode()
+    )
+
+
+def test_dates_in_display_names_are_shifted():
+    out, report = anonymize(with_display_name("05/14/2020"), seed="fixture-seed")
+    d = shifted_date(date(2020, 5, 14))
+    code = lab_value(out).getparent().find("c:code", NS)
+    assert code.get("displayName") == f"Annotation comment {d.month:02d}/{d.day:02d}/{d.year}"
+    assert report.residual_findings == []
+
+
+def test_day_first_date_is_a_residual_finding():
+    got, report = annotate("Seen on 14/03/2023", seed="s")
+    assert got == "Seen on 14/03/2023"
+    assert any("unshifted date '14/03/2023'" in f for f in report.residual_findings)
+    _, report = anonymize(with_display_name("14/03/2023"), seed="s")
+    assert any("14/03/2023" in f for f in report.residual_findings)
+
+
+# ---- identifiers outside narrative ------------------------------------------------------------
+
+
+def test_phone_email_mrn_in_structured_text_are_scrubbed():
+    got, report = annotate("Callback 555-987-6543 or lab@clinic.org, MRN: 7654321", seed="s")
+    assert "555-987-6543" not in got and "lab@clinic.org" not in got
+    assert "7654321" not in got
+    assert report.residual_findings == []
+
+
+def test_residual_check_covers_structured_text():
+    got, report = annotate("Accession 9876543210", seed="s")
+    assert "9876543210" in got
+    assert any("9876543210" in f for f in report.residual_findings)
+
+
+# ---- keyed hashes and the seed ---------------------------------------------------------------
+
+
+def test_id_hashes_are_not_plain_sha256_of_seed_and_value():
+    out, _ = anonymize(HANDWRITTEN.read_bytes(), seed="s")
+    assert b"LAB-7001-2" not in out
+    plain = hashlib.sha256(b"sLAB-7001-2").hexdigest()[:16]
+    assert plain.encode() not in out
+
+
+def test_id_hashes_depend_on_the_seed_as_a_key():
+    a, _ = anonymize(HANDWRITTEN.read_bytes(), seed="s")
+    b, _ = anonymize(HANDWRITTEN.read_bytes(), seed="sL")
+    ext = re.compile(rb'extension="([0-9a-f]{16})"')
+    assert set(ext.findall(a)).isdisjoint(ext.findall(b))
+
+
+def test_cli_prints_a_random_seed_to_stderr_only(tmp_path, capsys):
+    assert main(["anonymize", str(HANDWRITTEN), str(tmp_path / "o.xml")]) == 0
+    captured = capsys.readouterr()
+    assert "hrb: seed" not in captured.out
+    assert "hrb: seed" in captured.err and "keep it private" in captured.err
+
+
+# ---- embedded files ----------------------------------------------------------------------------
+
+
+def test_base64_ed_values_are_replaced():
+    value = (
+        '<value xsi:type="ED" mediaType="application/pdf" representation="B64" '
+        f'compression="DF" integrityCheck="abc">{PDF_B64}</value>'
+    ).encode()
+    out, report = anonymize(with_value(value), seed="s")
+    el = lab_value(out)
+    assert PDF_B64.encode() not in out
+    assert el.get("representation") == "B64" and el.get("mediaType") == "application/pdf"
+    assert el.get("compression") is None and el.get("integrityCheck") is None
+    assert base64.b64decode(el.text) == b"Content removed by hrb anonymize."
+    assert report.binary_payloads_removed == 1
+    assert report.non_xml_body is None
+    assert report.residual_findings == []
+
+
+def test_base64_after_a_reference_child_is_removed():
+    value = (
+        '<value xsi:type="ED" mediaType="application/pdf" representation="B64">'
+        f'<reference value="doc.pdf"/>{PDF_B64}'
+        '<thumbnail mediaType="image/png" representation="B64">iVBORw0KGgo=</thumbnail>'
+        "</value>"
+    ).encode()
+    out, report = anonymize(with_value(value), seed="s")
+    assert PDF_B64.encode() not in out and b"iVBORw0KGgo" not in out
+    el = lab_value(out)
+    assert el.text == BINARY_PLACEHOLDER
+    assert [etree.QName(c).localname for c in el] == ["reference"]
+    assert el[0].get("value") == "doc.pdf" and el[0].tail is None
+    assert report.binary_payloads_removed == 1
+
+
+@pytest.mark.parametrize("representation", [b' representation="B64"', b""])
+def test_non_xml_body_file_is_replaced_and_warned_about(representation, tmp_path, capsys):
+    data = non_xml_body_document().replace(b' representation="B64"', representation)
+    out, report = anonymize(data, seed="s")
+    assert PDF_B64.encode() not in out
+    assert report.non_xml_body == "file" and report.binary_payloads_removed == 1
+    rc, err = run_cli(capsys, tmp_path, "anonymize", data)
+    assert rc == 0 and "replaced with a placeholder" in err
+
+
+def test_plain_text_non_xml_body_is_scrubbed_not_called_removed(tmp_path, capsys):
+    data = non_xml_body_document().replace(
+        b'<text mediaType="application/pdf" representation="B64">' + PDF_B64.encode(),
+        b'<text mediaType="text/plain">Jane Sampleton seen 03/14/2023, call 913-555-0147',
+    )
+    out, report = anonymize(data, seed="s")
+    assert report.non_xml_body == "text"
+    assert b"Sampleton" not in out and b"913-555-0147" not in out and b"03/14/2023" not in out
+    _, err = run_cli(capsys, tmp_path, "anonymize", data)
+    assert "plain text" in err and "replaced with a placeholder" not in err

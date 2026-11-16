@@ -24,3 +24,4 @@ venv/
 # Local conversion output
 *.ndjson
 /out/
+CLAUDE.md
