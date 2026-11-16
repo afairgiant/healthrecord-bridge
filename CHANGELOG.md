@@ -4,6 +4,21 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- `hrb --version` and `healthrecord_bridge.__version__` read the installed package version
+  instead of a hardcoded string that had fallen behind (0.2.1 reported 0.2.0). The release
+  workflow now fails when the pushed tag does not match the `pyproject.toml` version.
+- Encounters: an attribute-only `dischargeDispositionCode` in the HL7 namespace was always
+  dropped (lxml elements without children are falsy), so
+  `Encounter.hospitalization.dischargeDisposition` was never filled from it.
+- `NaN`, `Infinity` and overflowing values such as `1e400` in PQ and REAL values and
+  medication periods are no longer written as numbers, which made the bundle and NDJSON
+  invalid JSON. They are kept as `valueString`, and both writers now refuse non-finite
+  numbers.
+
 ## [0.2.1] - 2026-11-14
 
 ### Fixed

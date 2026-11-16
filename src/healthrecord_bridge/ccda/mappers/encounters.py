@@ -8,7 +8,7 @@ from ..codes import concept_text
 from ..context import Context, status_code
 from ..document import Section, person_name
 from ..report import SectionReport, SkippedEntry
-from ..xml import attr, child, children, find, local_name
+from ..xml import SDTC_NS, attr, child, children, find, local_name
 from ._shared import V3_ACT_CODE, display_of, entries
 
 _CLASS_DISPLAY = {
@@ -110,9 +110,10 @@ def _encounter(ctx: Context, enc: etree._Element, section_code: str | None, ordi
             locations.append({"location": {"display": name}})
     if locations:
         res["location"] = locations
-    discharge = child(enc, "dischargeDispositionCode") or child(
-        enc, "dischargeDispositionCode", "urn:hl7-org:sdtc"
-    )
+    # Compare with None: an attribute-only lxml element has no children and is falsy.
+    discharge = child(enc, "dischargeDispositionCode")
+    if discharge is None:
+        discharge = child(enc, "dischargeDispositionCode", SDTC_NS)
     disposition = ctx.concept(discharge)
     if disposition:
         res["hospitalization"] = {"dischargeDisposition": disposition}

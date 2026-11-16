@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+import tomllib
+from pathlib import Path
+
+import pytest
 
 from conftest import HANDWRITTEN, SYNTHEA, XDM_ZIP
+from healthrecord_bridge import __version__
 from healthrecord_bridge.cli import main
 
 
@@ -63,3 +68,12 @@ def test_cli_assume_timezone(capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "-04:00" in out
+
+
+def test_version_matches_pyproject(capsys):
+    pyproject = Path(__file__).parents[1] / "pyproject.toml"
+    expected = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+    assert __version__ == expected
+    with pytest.raises(SystemExit):
+        main(["--version"])
+    assert capsys.readouterr().out.strip() == f"hrb {expected}"

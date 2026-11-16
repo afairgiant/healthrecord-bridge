@@ -9,7 +9,7 @@ import re
 
 from lxml import etree
 
-from ..codes import SNOMED, concept_text, quantity, simple_concept
+from ..codes import SNOMED, concept_text, finite_number, quantity, simple_concept
 from ..context import Context, status_code
 from ..xml import attr, child, children, text_of, xsi_type
 from ._shared import observation_category
@@ -122,12 +122,10 @@ def _set_value(ctx: Context, res: dict, obs: etree._Element, smoking: bool) -> N
                 res["valueInteger"] = int(raw)
                 return
         elif kind == "REAL":
-            raw = attr(value, "value")
-            try:
-                res["valueQuantity"] = {"value": float(raw or "")}
+            num = finite_number(attr(value, "value"))
+            if num is not None:
+                res["valueQuantity"] = {"value": num}
                 return
-            except ValueError:
-                pass
         elif kind == "BL":
             raw = (attr(value, "value") or "").lower()
             if raw in {"true", "false"}:

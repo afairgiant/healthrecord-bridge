@@ -85,7 +85,7 @@ def cmd_ccda2fhir(args: argparse.Namespace) -> int:
         print(f"hrb: error: {exc}", file=sys.stderr)
         return 1
     indent = 2 if args.pretty else None
-    text = json.dumps(bundle, indent=indent, ensure_ascii=False)
+    text = json.dumps(bundle, indent=indent, ensure_ascii=False, allow_nan=False)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fh:
             fh.write(text)
