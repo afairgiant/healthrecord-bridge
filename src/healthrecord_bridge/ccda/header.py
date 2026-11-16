@@ -5,15 +5,20 @@ from __future__ import annotations
 from lxml import etree
 
 from .codes import simple_concept
-from .context import Context
+from .context import Context, negated
 from .datetime_utils import date_only, to_instant
-from .document import person_name
+from .document import CdaDocument, person_name
 from .ids import CdaId, fallback_id, identifier, resource_id
-from .xml import SDTC_NS, attr, child, child_text, children, find, findall
+from .mappers._shared import has_template
+from .mappers.social_history import map_social_history
+from .sections import find_spec
+from .xml import SDTC_NS, attr, child, child_text, children, find, findall, q
 
 US_CORE_RACE = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race"
 US_CORE_ETHNICITY = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity"
 US_CORE_BIRTHSEX = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-birthsex"
+BIRTH_SEX_OBSERVATION = "2.16.840.1.113883.10.20.22.4.200"
+BIRTH_SEX_LOINC = "76689-9"
 CDC_RACE_ETHNICITY = "urn:oid:2.16.840.1.113883.6.238"
 _OMB_RACE = {"1002-5", "2028-9", "2054-5", "2076-8", "2106-3", "UNK", "ASKU"}
 _OMB_ETHNICITY = {"2135-2", "2186-5", "UNK", "ASKU"}
@@ -99,8 +104,9 @@ def map_patient(ctx: Context) -> dict:
     )
     if eth:
         extensions.append(eth)
-    if gender and gender.upper() in {"M", "F"}:
-        extensions.append({"url": US_CORE_BIRTHSEX, "valueCode": gender.upper()})
+    birth_sex = _birth_sex(ctx.doc)
+    if birth_sex:
+        extensions.append({"url": US_CORE_BIRTHSEX, "valueCode": birth_sex})
     if extensions:
         res["extension"] = extensions
     org = find(role, "c:providerOrganization")
@@ -108,6 +114,30 @@ def map_patient(ctx: Context) -> dict:
     if org_name:
         res["managingOrganization"] = {"display": org_name}
     return res
+
+
+def _birth_sex(doc: CdaDocument) -> str | None:
+    """``M``, ``F`` or ``UNK`` from the Birth Sex Observation; ``None`` without one.
+
+    Sex assigned at birth is its own data element, carried in Social History. It is
+    never derived from ``administrativeGenderCode``. Negated observations, ones about
+    someone else (a ``subject``) and ones without a value are passed over.
+    """
+    for section in doc.sections():
+        spec = find_spec(section)
+        if spec is None or spec.mapper is not map_social_history:
+            continue
+        for obs in section.element.iter(q("observation")):
+            if not has_template(obs, BIRTH_SEX_OBSERVATION) and (
+                attr(child(obs, "code"), "code") != BIRTH_SEX_LOINC
+            ):
+                continue
+            value = child(obs, "value")
+            if value is None or negated(obs) or child(obs, "subject") is not None:
+                continue
+            code = (attr(value, "code") or "").upper()
+            return code if code in {"M", "F"} else "UNK"
+    return None
 
 
 def _patient_identifier(cda_id: CdaId, primary: CdaId) -> dict:

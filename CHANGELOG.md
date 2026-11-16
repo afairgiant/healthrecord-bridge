@@ -8,6 +8,20 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- Patient: the US Core `birthsex` extension is no longer derived from
+  `administrativeGenderCode`, which is a different data element. It comes from the Birth
+  Sex Observation (template `2.16.840.1.113883.10.20.22.4.200`, LOINC `76689-9`) when the
+  document has one (`M`, `F`, or `UNK` for a null value) and is left out otherwise.
+- AllergyIntolerance: a "no known allergy" entry (a negated allergy observation with no
+  substance) is now the negated statement FHIR and US Core expect: a SNOMED code with
+  `verificationStatus` `confirmed`, instead of the allergy type ("Food allergy") marked
+  `refuted`. Allergy to substance and propensity to adverse reactions (to substance)
+  become "No known allergy" (`716186003`); drug allergy and propensity to adverse
+  reactions to drug become "No known drug allergy" (`409137002`); the food equivalents
+  become "No known food allergy" (`429625007`). Source text is kept on the code only when
+  it reads as a negation ("No known latex allergy"). Everything else negated stays
+  `refuted` with its own code: a named substance (by code or by name only), a dander
+  allergy and intolerances.
 - Anonymizer and synthesizer: identifier hashes, the day shift and the synthesizer's random
   choices are now HMAC-SHA256 keyed from the seed, one key per purpose, instead of
   `sha256(seed + value)`. A short identifier such as an MRN can no longer be recovered by
@@ -49,7 +63,17 @@ All notable changes to this project are recorded here. The format follows
   replaced with a placeholder, including data after a `reference` child (thumbnails and
   `compression`/`integrityCheck` are dropped), and the CLI warns when the document body is
   a `nonXMLBody`, saying whether it was removed or scrubbed as text.
-
+- Quantities, `REAL` values and medication timing periods lost significant trailing zeros
+  (`1.50` became `1.5`). The number is still a plain JSON number, and the FHIR
+  `quantity-precision` extension (on `_value` / `_period`) now records the source's
+  decimal places when they would otherwise be lost and the number still holds the source
+  value exactly. Exponent notation (`100E-2`) is read as a decimal, and `IVL_REAL` bounds
+  read as decimals like `REAL`.
+- Timestamps with an impossible day (`20240231`, February 29 outside a leap year) or an
+  offset FHIR does not allow (beyond 13:59 other than exactly 14:00, or minutes over 59,
+  such as `+9999` or `+1430`) produced invalid FHIR dateTimes. They are now kept only at
+  the precision before the impossible part (`2024-02`, or the date without its time), and
+  the conversion report counts them. `assume_timezone` rejects such offsets.
 - `hrb --version` and `healthrecord_bridge.__version__` read the installed package version
   instead of a hardcoded string that had fallen behind (0.2.1 reported 0.2.0). The release
   workflow now fails when the pushed tag does not match the `pyproject.toml` version.

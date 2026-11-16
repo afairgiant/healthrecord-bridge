@@ -9,7 +9,7 @@ import re
 
 from lxml import etree
 
-from ..codes import SNOMED, concept_text, finite_number, quantity, simple_concept
+from ..codes import SNOMED, concept_text, decimal_fields, quantity, simple_concept
 from ..context import Context, status_code
 from ..xml import attr, child, children, text_of, xsi_type
 from ._shared import observation_category
@@ -122,9 +122,9 @@ def _set_value(ctx: Context, res: dict, obs: etree._Element, smoking: bool) -> N
                 res["valueInteger"] = int(raw)
                 return
         elif kind == "REAL":
-            num = finite_number(attr(value, "value"))
-            if num is not None:
-                res["valueQuantity"] = {"value": num}
+            real = decimal_fields("value", attr(value, "value"), real=True)
+            if real:
+                res["valueQuantity"] = real
                 return
         elif kind == "BL":
             raw = (attr(value, "value") or "").lower()
@@ -137,7 +137,7 @@ def _set_value(ctx: Context, res: dict, obs: etree._Element, smoking: bool) -> N
                 res["valueDateTime"] = ts
                 return
         elif kind in {"IVL_PQ", "IVL_INT", "IVL_REAL"}:
-            rng = _range(value)
+            rng = _range(value, real=kind == "IVL_REAL")
             if rng:
                 res["valueRange"] = rng
                 return
@@ -168,10 +168,10 @@ def _fill_smoking_display(cc: dict) -> None:
             c["display"] = _SMOKING_DISPLAY[c["code"]]
 
 
-def _range(el: etree._Element) -> dict | None:
+def _range(el: etree._Element, *, real: bool = False) -> dict | None:
     out: dict = {}
-    low = quantity(child(el, "low"))
-    high = quantity(child(el, "high"))
+    low = quantity(child(el, "low"), real=real)
+    high = quantity(child(el, "high"), real=real)
     if low:
         out["low"] = low
     if high:

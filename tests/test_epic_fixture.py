@@ -376,7 +376,8 @@ def test_other_sections_map_epic_shapes(converted, root):
     smoking = next(o for o in social if o["code"]["coding"][0]["code"] == "72166-2")
     assert smoking["valueCodeableConcept"]["coding"][0]["display"] == "Never smoker"
     allergy = types["AllergyIntolerance"][0]
-    assert allergy["verificationStatus"]["coding"][0]["code"] == "refuted"
+    assert allergy["verificationStatus"]["coding"][0]["code"] == "confirmed"
+    assert allergy["code"]["coding"][0]["code"] == "716186003"  # No known allergy
     assert allergy["note"] == [{"text": "No known allergies"}]
     imm = types["Immunization"][0]
     assert imm["status"] == "not-done"

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import re
+
 from lxml import etree
 
 from ..codes import SNOMED, concept_text, simple_concept
 from ..context import Context, negated, status_code
 from ..document import Section
 from ..report import SectionReport, SkippedEntry
-from ..xml import attr, child, find, local_name
+from ..xml import attr, child, child_text, find, local_name
 from ._shared import ALLERGY_CLINICAL, ALLERGY_VERIFICATION, entries, has_template, related
 
 ALLERGY_OBSERVATION = "2.16.840.1.113883.10.20.22.4.7"
@@ -30,6 +32,26 @@ _TYPE_BY_VALUE: dict[str, tuple[str | None, str | None]] = {
     "419511003": (None, "medication"),  # Propensity to adverse reactions to drug
     "418471000": (None, "food"),  # Propensity to adverse reactions to food
 }
+
+# A negated allergy-type value with no substance is a "no known allergy" statement. FHIR puts
+# that statement in the code ("a general or categorical negated statement"), confirmed, as
+# US Core does; "refuted" stays for a negated allergy to a named substance.
+# Only types whose negation is exactly one of these statements: a negated dander allergy is
+# not "no environmental allergies", and intolerances have no standard "no known" concept.
+_NKA = ("716186003", "No known allergy")
+_NKDA = ("409137002", "No known drug allergy")
+_NKFA = ("429625007", "No known food allergy")
+_NO_KNOWN_ALLERGY: dict[str, tuple[str, str]] = {
+    "419199007": _NKA,  # Allergy to substance
+    "418038007": _NKA,  # Propensity to adverse reactions to substance
+    "420134006": _NKA,  # Propensity to adverse reactions
+    "416098002": _NKDA,  # Drug allergy
+    "419511003": _NKDA,  # Propensity to adverse reactions to drug
+    "414285001": _NKFA,  # Food allergy
+    "418471000": _NKFA,  # Propensity to adverse reactions to food
+}
+# Source text worth keeping on a "no known" code: it has to say no, not name the type.
+_NEGATIVE_TEXT = re.compile(r"\b(?:no|none|denies|nk[dfa]?a)\b", re.IGNORECASE)
 
 _SEVERITY: dict[str, str] = {
     "255604002": "mild",
@@ -80,8 +102,11 @@ def _allergy(
     ordinal: int,
     sub: int,
 ) -> dict | None:
-    substance_el = find(obs, "c:participant/c:participantRole/c:playingEntity/c:code")
-    code = ctx.concept(substance_el)
+    entity = find(obs, "c:participant/c:participantRole/c:playingEntity")
+    code = ctx.concept(child(entity, "code"))
+    if code is None and (name := child_text(entity, "name")):
+        code = {"text": name}  # a substance named only by text is still a substance
+    has_substance = code is not None
     value_el = child(obs, "value")
     value = ctx.concept(value_el)
     if code is None:
@@ -96,15 +121,25 @@ def _allergy(
     res = ctx.new_resource("AllergyIntolerance", id_source, section_code, ordinal, sub)
     res["patient"] = ctx.patient_ref
 
+    kind, cat = _type_and_category(value_el)
+    no_known = (
+        _NO_KNOWN_ALLERGY.get(attr(value_el, "code") or "")
+        if negated(obs) and not has_substance
+        else None
+    )
+    if no_known:
+        text = code.get("text")
+        code = simple_concept(SNOMED, *no_known)
+        if text and _NEGATIVE_TEXT.search(text):
+            code["text"] = text  # "No known latex allergy" stays; "Drug allergy" would contradict
     clinical = _clinical_status(act, obs)
     if clinical:
         res["clinicalStatus"] = simple_concept(ALLERGY_CLINICAL, clinical, clinical.capitalize())
-    if negated(obs):
+    if negated(obs) and not no_known:
         res["verificationStatus"] = simple_concept(ALLERGY_VERIFICATION, "refuted", "Refuted")
     else:
         res["verificationStatus"] = simple_concept(ALLERGY_VERIFICATION, "confirmed", "Confirmed")
 
-    kind, cat = _type_and_category(value_el)
     if kind:
         res["type"] = kind
     if cat:
