@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
+import pytest
+
 from conftest import HANDWRITTEN, SYNTHEA, by_type
-from healthrecord_bridge.ccda import convert
+from healthrecord_bridge.ccda import convert, convert_bytes
 
 HAROLD = next(p for p in SYNTHEA if p.name.startswith("Harold594"))
 
@@ -58,7 +62,8 @@ def test_patient_header():
     assert race[1]["url"] == "detailed" and race[1]["valueCoding"]["code"] == "2108-9"
     assert race[2] == {"url": "text", "valueString": "White, European"}
     assert ext["us-core-ethnicity"]["extension"][0]["valueCoding"]["code"] == "2186-5"
-    assert ext["us-core-birthsex"]["valueCode"] == "F"
+    # No Birth Sex Observation: administrative gender F says nothing about sex at birth.
+    assert "us-core-birthsex" not in ext
 
 
 def test_synthea_patient_header():
@@ -127,8 +132,17 @@ def test_allergy_with_reaction_severity_criticality():
     ]
     assert pcn["note"] == [{"text": "Penicillin G Hives Moderate"}]
     nkfa = _one(allergies, category=["food"])
-    assert nkfa["verificationStatus"]["coding"][0]["code"] == "refuted"
-    assert nkfa["code"]["coding"][0]["code"] == "414285001"
+    assert nkfa["verificationStatus"]["coding"][0]["code"] == "confirmed"
+    assert "clinicalStatus" in nkfa  # FHIR R4 ait-1
+    assert nkfa["code"] == {
+        "coding": [
+            {
+                "system": "http://snomed.info/sct",
+                "code": "429625007",
+                "display": "No known food allergy",
+            }
+        ]
+    }
     assert "onsetDateTime" not in nkfa
 
 
@@ -518,3 +532,81 @@ def test_assume_timezone_keeps_time_of_day():
     assert report.documents[0].notes == []
     _, report_default = convert(HAROLD)
     assert any("truncated" in n for n in report_default.documents[0].notes)
+
+
+BIRTH_SEX_ENTRY = (
+    b'<entry><observation classCode="OBS" moodCode="EVN">'
+    b'<templateId root="2.16.840.1.113883.10.20.22.4.200" extension="2016-06-01"/>'
+    b'<code code="76689-9" codeSystem="2.16.840.1.113883.6.1"/>'
+    b'<statusCode code="completed"/>{value}</observation></entry>'
+)
+
+
+def birth_sex_entry(value: bytes, attrs: bytes = b"", extra: bytes = b"") -> bytes:
+    entry = BIRTH_SEX_ENTRY.replace(b"{value}", extra + value)
+    return entry.replace(b'moodCode="EVN"', b'moodCode="EVN"' + attrs, 1)
+
+
+def with_birth_sex(value: bytes, *before: bytes) -> bytes:
+    """The handwritten fixture with Social History entries ``before`` and a birth sex ``value``."""
+    data = HANDWRITTEN.read_bytes()
+    entry = b"".join(before) + birth_sex_entry(value)
+    data, n = re.subn(
+        rb"(<title>Social History</title>\s*<text>.*?</text>)",
+        lambda m: m.group(1) + entry,
+        data,
+        flags=re.DOTALL,
+    )
+    assert n == 1
+    return data
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (b'<value xsi:type="CD" code="M" codeSystem="2.16.840.1.113883.5.1"/>', "M"),
+        (b'<value xsi:type="CD" code="F" codeSystem="2.16.840.1.113883.5.1"/>', "F"),
+        (b'<value xsi:type="CD" nullFlavor="UNK"/>', "UNK"),
+    ],
+)
+def test_birth_sex_comes_from_the_birth_sex_observation(value, expected):
+    bundle, _ = convert_bytes(with_birth_sex(value), "birthsex.xml")
+    (patient,) = by_type(bundle)["Patient"]
+    ext = {e["url"].rsplit("/", 1)[-1]: e for e in patient["extension"]}
+    assert ext["us-core-birthsex"]["valueCode"] == expected
+    assert patient["gender"] == "female"  # administrative gender is untouched
+
+
+MALE = b'<value xsi:type="CD" code="M" codeSystem="2.16.840.1.113883.5.1"/>'
+FEMALE = b'<value xsi:type="CD" code="F" codeSystem="2.16.840.1.113883.5.1"/>'
+
+
+@pytest.mark.parametrize(
+    "skipped",
+    [
+        birth_sex_entry(b""),  # no value
+        birth_sex_entry(MALE, attrs=b' negationInd="true"'),  # negated
+        birth_sex_entry(MALE, extra=b'<subject><relatedSubject classCode="PRS"/></subject>'),
+    ],
+    ids=["no-value", "negated", "relative"],
+)
+def test_birth_sex_skips_observations_that_do_not_state_it(skipped):
+    bundle, _ = convert_bytes(with_birth_sex(FEMALE, skipped), "birthsex.xml")
+    (patient,) = by_type(bundle)["Patient"]
+    ext = {e["url"].rsplit("/", 1)[-1]: e for e in patient["extension"]}
+    assert ext["us-core-birthsex"]["valueCode"] == "F"
+
+
+def test_birth_sex_outside_social_history_is_ignored():
+    data = HANDWRITTEN.read_bytes()
+    data, n = re.subn(
+        rb"(<title>Results</title>\s*<text>.*?</text>)",
+        lambda m: m.group(1) + birth_sex_entry(MALE),
+        data,
+        count=1,
+        flags=re.DOTALL,
+    )
+    assert n == 1
+    bundle, _ = convert_bytes(data, "birthsex.xml")
+    (patient,) = by_type(bundle)["Patient"]
+    assert all("birthsex" not in e["url"] for e in patient.get("extension", []))

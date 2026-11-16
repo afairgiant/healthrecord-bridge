@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from decimal import Decimal, InvalidOperation
 
 from lxml import etree
 
@@ -67,6 +68,7 @@ OID_TO_URI: dict[str, str] = {
 }
 
 UCUM = "http://unitsofmeasure.org"
+QUANTITY_PRECISION = "http://hl7.org/fhir/StructureDefinition/quantity-precision"
 SNOMED = OID_TO_URI["2.16.840.1.113883.6.96"]
 LOINC = OID_TO_URI["2.16.840.1.113883.6.1"]
 RXNORM = OID_TO_URI["2.16.840.1.113883.6.88"]
@@ -215,15 +217,44 @@ def finite_number(raw: str | None) -> float | None:
     return num if math.isfinite(num) else None
 
 
-def quantity(el: etree._Element | None) -> dict | None:
+def decimal_fields(name: str, raw: str | None, *, real: bool = False) -> dict:
+    """``{name: number}`` for a decimal attribute, plus FHIR's precision extension if needed.
+
+    A whole number written without a fraction (``"5"``) stays an ``int`` unless ``real``
+    (an HL7 ``REAL`` reads as a decimal either way). A JSON number written from a Python
+    float drops trailing zeros (``"1.50"`` becomes ``1.5``), and those zeros are
+    significant figures: when the float still holds the source value exactly but shows
+    fewer decimal places, ``_<name>`` carries the ``quantity-precision`` extension with
+    the source's count, so the bundle stays plain JSON. Empty when ``raw`` is not a
+    finite number.
+    """
+    try:
+        source = Decimal((raw or "").strip())
+    except InvalidOperation:
+        return {}
+    if not source.is_finite() or not math.isfinite(float(source)):
+        return {}
+    places = _decimal_places(source)
+    value: int | float = int(source) if not places and not real else float(source)
+    out: dict = {name: value}
+    written = Decimal(repr(value))
+    if places > _decimal_places(written) and written == source:
+        out[f"_{name}"] = {"extension": [{"url": QUANTITY_PRECISION, "valueInteger": places}]}
+    return out
+
+
+def _decimal_places(d: Decimal) -> int:
+    exponent = d.as_tuple().exponent
+    return -exponent if isinstance(exponent, int) and exponent < 0 else 0
+
+
+def quantity(el: etree._Element | None, *, real: bool = False) -> dict | None:
     """Build a FHIR ``Quantity`` from a PQ element (``value`` and ``unit``)."""
     if is_null(el):
         return None
-    raw = attr(el, "value")
-    num = finite_number(raw)
-    if raw is None or num is None:
+    out = decimal_fields("value", attr(el, "value"), real=real)
+    if not out:
         return None
-    out: dict = {"value": int(num) if num.is_integer() and "." not in raw else num}
     unit = attr(el, "unit")
     if unit and unit != "1":
         out["unit"] = unit

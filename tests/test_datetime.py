@@ -59,3 +59,60 @@ def test_normalize_offset():
     assert normalize_offset("+05:30") == "+05:30"
     with pytest.raises(ValueError):
         normalize_offset("EST")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "20240231",  # February 31
+        "20230229",  # not a leap year
+        "20240431",  # April has 30 days
+    ],
+)
+def test_impossible_day_keeps_the_month(raw):
+    parsed = parse_ts(raw)
+    assert parsed.value == raw[:4] + "-" + raw[4:6]
+    assert parsed.invalid and not parsed.has_time
+
+
+def test_impossible_day_drops_the_time_too():
+    parsed = parse_ts("20240231120000-0500")
+    assert parsed.value == "2024-02" and parsed.invalid
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "20240301120000+9999",
+        "20240301120000+1500",
+        "20240301120000+1430",  # FHIR allows 14:00 exactly, nothing past it
+        "20240301120000-0560",
+    ],
+)
+def test_impossible_offset_keeps_the_date(raw):
+    parsed = parse_ts(raw)
+    assert parsed.value == "2024-03-01"
+    assert parsed.invalid
+    # Not "truncated": assume_timezone cannot recover a time whose offset was impossible.
+    assert not parsed.truncated
+    assert parse_ts(raw, "-05:00").value == "2024-03-01"
+    assert parse_ts("19800515120000+9999").value == "1980-05-15"  # a birthTime keeps its date
+
+
+@pytest.mark.parametrize("offset", ["+15:00", "+09:99", "+1430", "-1401"])
+def test_assumed_timezone_must_be_a_fhir_offset(offset):
+    with pytest.raises(ValueError):
+        normalize_offset(offset)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("20240229", "2024-02-29"),
+        ("20240301120000+1400", "2024-03-01T12:00:00+14:00"),
+        ("20240301120000-1400", "2024-03-01T12:00:00-14:00"),
+        ("20240301120000+1345", "2024-03-01T12:00:00+13:45"),
+    ],
+)
+def test_edge_dates_and_offsets_are_kept(raw, expected):
+    assert parse_ts(raw).value == expected

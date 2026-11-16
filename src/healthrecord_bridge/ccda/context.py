@@ -27,6 +27,7 @@ class Context:
     patient_ref: dict = field(default_factory=dict)
     unmapped: set[str] = field(default_factory=set)
     truncated_timestamps: int = 0
+    invalid_timestamps: int = 0
     id_owners: dict[tuple[str, CdaId], etree._Element] = field(default_factory=dict)
     """Element that first claimed each (resource type, CDA id) pair."""
 
@@ -48,6 +49,8 @@ class Context:
         p = parse_ts(raw, self.assume_tz)
         if p is not None and p.truncated:
             self.truncated_timestamps += 1
+        if p is not None and p.invalid:
+            self.invalid_timestamps += 1
         return p
 
     def ts(self, raw: str | None) -> str | None:

@@ -237,10 +237,10 @@ The converter locates sections by LOINC `section/code` or by `templateId`; eithe
 
 | C-CDA section | LOINC | FHIR R4 output |
 |---|---|---|
-| Header: recordTarget | | `Patient` (name, gender, birthDate, deceased, address, telecom, identifiers including MRN, marital status, language, US Core race, ethnicity and birth sex extensions) |
+| Header: recordTarget | | `Patient` (name, gender, birthDate, deceased, address, telecom, identifiers including MRN, marital status, language, US Core race and ethnicity extensions, and the birth sex extension from the Birth Sex Observation in Social History) |
 | Header: custodian | | `Organization` |
 | Header: document | | `DocumentReference` (type, date, author, custodian, title, `application/xml`, no embedded data) and one `Provenance` targeting every resource from the document |
-| Allergies | 48765-2 | `AllergyIntolerance` (substance code, clinicalStatus, verificationStatus refuted for "no known" entries, type, category, criticality, onset, reactions with manifestation and severity) |
+| Allergies | 48765-2 | `AllergyIntolerance` (substance code, clinicalStatus, a SNOMED "No known ... allergy" code for "no known allergy" entries, verificationStatus refuted for a negated allergy to a named substance, type, category, criticality, onset, reactions with manifestation and severity) |
 | Medications | 10160-0 | `MedicationStatement` for event-mood entries with completed or active status, otherwise `MedicationRequest`; RxNorm code, dosage text, dose, route, frequency, effective period, reason |
 | Problems | 11450-4 | `Condition` (SNOMED and ICD-10-CM codes, onset, abatement, clinicalStatus, category problem-list-item) |
 | Procedures | 47519-4 | `Procedure` (code, status, performed date or period, body site, performer) |

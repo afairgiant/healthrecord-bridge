@@ -97,6 +97,11 @@ def convert_document(
             f"{ctx.truncated_timestamps} timestamps had a time of day but no UTC offset and "
             "were truncated to a date; pass assume_timezone to keep the time"
         )
+    if ctx.invalid_timestamps:
+        report.notes.append(
+            f"{ctx.invalid_timestamps} timestamps had an impossible day or UTC offset and were "
+            "kept only at the precision before it (the month, or the date)"
+        )
     return resources, report
 
 

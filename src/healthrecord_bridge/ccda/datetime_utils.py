@@ -9,6 +9,7 @@ otherwise the value is truncated to a date and the caller is told so.
 
 from __future__ import annotations
 
+import calendar
 import re
 from dataclasses import dataclass
 
@@ -29,6 +30,15 @@ class ParsedTs:
     """True when the source carried a time of day."""
     truncated: bool
     """True when the time of day was dropped because no timezone was known."""
+    invalid: bool = False
+    """True when part of the source was impossible (a February 30, a +9999 offset) and the
+    value was kept only at the precision before it."""
+
+
+def _valid_offset(hours: str, minutes: str) -> bool:
+    """FHIR allows offsets from 00:00 to 13:59, and exactly 14:00, either sign."""
+    h, m = int(hours), int(minutes)
+    return m <= 59 and (h <= 13 or (h == 14 and m == 0))
 
 
 def normalize_offset(offset: str | None) -> str | None:
@@ -39,7 +49,7 @@ def normalize_offset(offset: str | None) -> str | None:
     if offset.upper() == "Z":
         return "Z"
     m = re.match(r"^([+-])(\d{2}):?(\d{2})$", offset)
-    if not m:
+    if not m or not _valid_offset(m.group(2), m.group(3)):
         raise ValueError(f"not a timezone offset: {offset!r}")
     return f"{m.group(1)}{m.group(2)}:{m.group(3)}"
 
@@ -65,8 +75,9 @@ def parse_ts(raw: str | None, assume_tz: str | None = None) -> ParsedTs | None:
             return None
         date += f"-{mo}"
         if d:
-            if not 1 <= int(d) <= 31:
-                return None
+            if not 1 <= int(d) <= calendar.monthrange(int(y), int(mo))[1]:
+                # 20240231 is not a date, but its year and month still are.
+                return ParsedTs(date, False, False, invalid=True)
             date += f"-{d}"
     if not (h and d):
         return ParsedTs(date, False, False)
@@ -79,6 +90,10 @@ def parse_ts(raw: str | None, assume_tz: str | None = None) -> ParsedTs | None:
     time = f"{h}:{mi}:{s}"
     if f:
         time += f".{f[:3]}"
+    if tz and not _valid_offset(tz[1:3], tz[3:]):
+        # An impossible offset (+9999) makes the time unusable, not the date. assume_tz
+        # cannot stand in: the source did give an offset, just not a real one.
+        return ParsedTs(date, True, False, invalid=True)
     if tz:
         offset: str | None = f"{tz[:3]}:{tz[3:]}"
     else:
