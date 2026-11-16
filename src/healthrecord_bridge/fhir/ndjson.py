@@ -25,7 +25,7 @@ def write_ndjson(bundle: dict, directory: str | os.PathLike[str]) -> dict[str, P
         path = out_dir / f"{rtype}.ndjson"
         with path.open("w", encoding="utf-8") as fh:
             for r in resources:
-                fh.write(json.dumps(r, ensure_ascii=False, separators=(",", ":")))
+                fh.write(json.dumps(r, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
                 fh.write("\n")
         written[rtype] = path
     return written

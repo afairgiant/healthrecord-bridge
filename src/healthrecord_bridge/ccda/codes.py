@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 from lxml import etree
@@ -199,16 +200,28 @@ def simple_concept(system: str, code: str, display: str | None = None) -> dict:
     return {"coding": [c]}
 
 
-def quantity(el: etree._Element | None) -> dict | None:
-    """Build a FHIR ``Quantity`` from a PQ element (``value`` and ``unit``)."""
-    if is_null(el):
-        return None
-    raw = attr(el, "value")
+def finite_number(raw: str | None) -> float | None:
+    """Parse a decimal attribute, rejecting ``NaN`` and infinities.
+
+    ``float`` accepts ``NaN``, ``Infinity`` and overflowing values such as ``1e400``;
+    none of them can be written as JSON, so they count as unparseable.
+    """
     if raw is None:
         return None
     try:
         num = float(raw)
     except ValueError:
+        return None
+    return num if math.isfinite(num) else None
+
+
+def quantity(el: etree._Element | None) -> dict | None:
+    """Build a FHIR ``Quantity`` from a PQ element (``value`` and ``unit``)."""
+    if is_null(el):
+        return None
+    raw = attr(el, "value")
+    num = finite_number(raw)
+    if raw is None or num is None:
         return None
     out: dict = {"value": int(num) if num.is_integer() and "." not in raw else num}
     unit = attr(el, "unit")

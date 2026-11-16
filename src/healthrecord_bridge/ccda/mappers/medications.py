@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from lxml import etree
 
-from ..codes import concept_text, quantity
+from ..codes import concept_text, finite_number, quantity
 from ..context import Context, mood, negated, status_code
 from ..document import Section
 from ..report import SectionReport, SkippedEntry
@@ -150,12 +150,10 @@ def _dosage(ctx: Context, sa: etree._Element, eff_el: etree._Element | None) -> 
         period = child(freq, "period")
         pval = attr(period, "value")
         punit = attr(period, "unit")
-        if pval and punit in _PERIOD_UNITS:
-            try:
-                repeat["period"] = float(pval) if "." in pval else int(pval)
-                repeat["periodUnit"] = punit
-            except ValueError:
-                pass
+        num = finite_number(pval)
+        if pval and num is not None and punit in _PERIOD_UNITS:
+            repeat["period"] = int(num) if num.is_integer() and "." not in pval else num
+            repeat["periodUnit"] = punit
         if repeat:
             dosage["timing"] = {"repeat": repeat}
     site = ctx.concept(child(sa, "approachSiteCode"))
