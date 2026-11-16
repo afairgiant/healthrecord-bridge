@@ -488,6 +488,7 @@
                   <value xsi:type="CD" code="59621000" codeSystem="2.16.840.1.113883.6.96" displayName="Essential hypertension"/>
                 </observation>
               </entryRelationship>
+              <dischargeDispositionCode code="03" codeSystem="2.16.840.1.113883.12.112" displayName="Discharged/transferred to SNF"/>
             </encounter>
           </entry>
           <entry typeCode="DRIV">

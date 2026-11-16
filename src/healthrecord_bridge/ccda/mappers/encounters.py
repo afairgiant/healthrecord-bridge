@@ -110,9 +110,9 @@ def _encounter(ctx: Context, enc: etree._Element, section_code: str | None, ordi
             locations.append({"location": {"display": name}})
     if locations:
         res["location"] = locations
-    discharge = child(enc, "dischargeDispositionCode") or child(
-        enc, "dischargeDispositionCode", "urn:hl7-org:sdtc"
-    )
+    discharge = child(enc, "dischargeDispositionCode")
+    if discharge is None:
+        discharge = child(enc, "dischargeDispositionCode", "urn:hl7-org:sdtc")
     disposition = ctx.concept(discharge)
     if disposition:
         res["hospitalization"] = {"dischargeDisposition": disposition}

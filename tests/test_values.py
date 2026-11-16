@@ -277,6 +277,9 @@ def test_encounters():
     assert office["participant"] == [{"individual": {"display": "Robert Clinician MD"}}]
     assert office["location"] == [{"location": {"display": "Example Family Medicine"}}]
     assert office["reasonCode"][0]["coding"][0]["code"] == "59621000"
+    office_disposition = office["hospitalization"]["dischargeDisposition"]["coding"][0]
+    assert office_disposition["system"] == "http://terminology.hl7.org/CodeSystem/v2-0112"
+    assert office_disposition["code"] == "03"
     admission = _one(
         encounters,
         period={"start": "2023-11-05T09:45:00-06:00", "end": "2023-11-07T11:00:00-06:00"},
