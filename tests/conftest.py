@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import pytest
@@ -57,3 +58,30 @@ def by_type(bundle: dict) -> dict[str, list[dict]]:
 @pytest.fixture(params=ALL_XML, ids=lambda p: p.stem[:24])
 def fixture_path(request) -> Path:
     return request.param
+
+
+PDF_B64 = base64.b64encode(b"%PDF-1.4\nJane Sampleton MRN 1234567").decode("ascii")
+"""A base64 'scanned document' that names the handwritten fixture's patient."""
+
+
+def non_xml_body_document() -> bytes:
+    """The handwritten fixture with its structured body swapped for a base64 PDF."""
+    data = HANDWRITTEN.read_bytes()
+    start = data.index(b"<structuredBody>")
+    end = data.index(b"</structuredBody>") + len(b"</structuredBody>")
+    body = (
+        b'<nonXMLBody><text mediaType="application/pdf" representation="B64">'
+        + PDF_B64.encode()
+        + b"</text></nonXMLBody>"
+    )
+    return data[:start] + body + data[end:]
+
+
+def run_cli(capsys, tmp_path: Path, command: str, data: bytes) -> tuple[int, str]:
+    """Run ``hrb <command>`` on ``data`` with a fixed seed; return the exit code and stderr."""
+    from healthrecord_bridge.cli import main
+
+    src = tmp_path / "in.xml"
+    src.write_bytes(data)
+    rc = main([command, str(src), str(tmp_path / "out.xml"), "--seed", "s"])
+    return rc, capsys.readouterr().err

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import __version__
 from .ccda import CcdaError, convert_many
-from .ccda.anonymize import anonymize_file
+from .ccda.anonymize import AnonymizeReport, anonymize_file
 from .ccda.synthesize import synthesize_file
 from .fhir.ndjson import write_ndjson
 
@@ -57,7 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument(
         "--seed",
         metavar="SEED",
-        help="seed for the day shift and id hashes (same seed, same output; default: random)",
+        help=(
+            "secret seed for the day shift and id hashes (same seed, same output; "
+            "keep it private; default: random)"
+        ),
     )
     a.add_argument("--report", metavar="report.json", help="write the anonymize report as JSON")
     a.set_defaults(func=cmd_anonymize)
@@ -71,7 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--seed",
         metavar="SEED",
-        help="seed for the anonymizer and every choice (same seed, same output; default: random)",
+        help=(
+            "secret seed for the anonymizer and every choice (same seed, same output; "
+            "keep it private; default: random)"
+        ),
     )
     s.add_argument("--report", metavar="report.json", help="write the synthesize report as JSON")
     s.set_defaults(func=cmd_synthesize)
@@ -115,15 +121,9 @@ def cmd_anonymize(args: argparse.Namespace) -> int:
         with open(args.report, "w", encoding="utf-8") as fh:
             json.dump(report.to_dict(), fh, indent=2)
             fh.write("\n")
-    print(f"{args.output}: {report.summary()} (seed {seed})")
-    if report.residual_findings:
-        print(
-            f"hrb: warning: {len(report.residual_findings)} residual findings; "
-            "read the output before sharing it",
-            file=sys.stderr,
-        )
-        for finding in report.residual_findings:
-            print(f"  {finding}", file=sys.stderr)
+    print(f"{args.output}: {report.summary()}")
+    _print_scrub_warnings(None if args.seed else seed, report)
+    _print_residuals(report.residual_findings)
     return 0
 
 
@@ -138,7 +138,8 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
         with open(args.report, "w", encoding="utf-8") as fh:
             json.dump(report.to_dict(), fh, indent=2)
             fh.write("\n")
-    print(f"{args.output}: {report.summary()} (seed {seed})")
+    print(f"{args.output}: {report.summary()}")
+    _print_scrub_warnings(None if args.seed else seed, report.anonymize)
     if report.unrecognized_sections:
         print(
             f"hrb: warning: {len(report.unrecognized_sections)} unrecognized sections were "
@@ -151,15 +152,41 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
                 f"({section['entries']} entries)",
                 file=sys.stderr,
             )
-    if report.residual_findings:
+    _print_residuals(report.residual_findings)
+    return 0
+
+
+def _print_scrub_warnings(random_seed: str | None, report: AnonymizeReport) -> None:
+    """Show a random seed (so the run can be repeated) and warn about a ``nonXMLBody``."""
+    if random_seed is not None:
         print(
-            f"hrb: warning: {len(report.residual_findings)} residual findings; "
-            "read the output before sharing it",
+            f"hrb: seed {random_seed} (keep it private: it reproduces this output, "
+            "and with it the id hashes can be checked against guesses)",
             file=sys.stderr,
         )
-        for finding in report.residual_findings:
-            print(f"  {finding}", file=sys.stderr)
-    return 0
+    if report.non_xml_body == "file":
+        print(
+            "hrb: warning: the document body is a nonXMLBody (a scanned or attached file); "
+            "it was replaced with a placeholder, so the output has no clinical content",
+            file=sys.stderr,
+        )
+    elif report.non_xml_body == "text":
+        print(
+            "hrb: warning: the document body is a nonXMLBody of plain text; it was scrubbed "
+            "like narrative, but read all of it before sharing the output",
+            file=sys.stderr,
+        )
+
+
+def _print_residuals(findings: list[str]) -> None:
+    if not findings:
+        return
+    print(
+        f"hrb: warning: {len(findings)} residual findings; read the output before sharing it",
+        file=sys.stderr,
+    )
+    for finding in findings:
+        print(f"  {finding}", file=sys.stderr)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

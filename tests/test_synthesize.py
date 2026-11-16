@@ -8,7 +8,16 @@ from pathlib import Path
 import pytest
 from lxml import etree
 
-from conftest import HANDWRITTEN, NS, SYNTHEA, component_observation_counts, section_entry_counts
+from conftest import (
+    HANDWRITTEN,
+    NS,
+    PDF_B64,
+    SYNTHEA,
+    component_observation_counts,
+    non_xml_body_document,
+    run_cli,
+    section_entry_counts,
+)
 from healthrecord_bridge.ccda import convert_bytes
 from healthrecord_bridge.ccda.synthesize import (
     ALLERGENS,
@@ -307,7 +316,7 @@ def test_unknown_section_is_blanked_and_reported():
     assert report.residual_findings == []
     d = report.to_dict()
     assert set(d) == {"anonymize", "entries_replaced", "unrecognized_sections", "residual_findings"}
-    assert d["anonymize"]["day_shift"] == report.anonymize.day_shift
+    assert "day_shift" not in d["anonymize"]
     assert "unrecognized sections 1" in report.summary()
 
 
@@ -370,7 +379,8 @@ def test_birth_year_in_range_and_seed_stable():
         assert out == again
         value = etree.fromstring(out).find(".//c:patient/c:birthTime", NS).get("value")
         assert len(value) == 8 and value[4:] == "0101"
-        assert 2024 - 70 <= int(value[:4]) <= 2024 - 25
+        # 25 to 70 years before the latest (shifted, so up to 2 years later) date.
+        assert 2024 - 2 - 70 <= int(value[:4]) <= 2024 + 2 - 25
         years.add(value[:4])
     assert len(years) > 1
     data = data.replace(b'<birthTime value="19840722"/>', b'<birthTime value="19840722143000"/>')
@@ -493,7 +503,7 @@ def test_cli_synthesize(tmp_path, capsys):
     rc = main(["synthesize", str(HANDWRITTEN), str(out), "--seed", "cli", "--report", str(rep)])
     assert rc == 0
     captured = capsys.readouterr()
-    assert "entries replaced" in captured.out and "seed cli" in captured.out
+    assert "entries replaced" in captured.out and "seed" not in captured.out
     assert captured.err == ""
     expected = synthesize_file(HANDWRITTEN, tmp_path / "again.xml", seed="cli")
     assert out.read_bytes() == (tmp_path / "again.xml").read_bytes()
@@ -522,3 +532,11 @@ def test_random_seed_when_none():
     a, _ = synthesize(data)
     b, _ = synthesize(data)
     assert a != b
+
+
+def test_non_xml_body_is_removed_and_warned_about(tmp_path, capsys):
+    out, report = synthesize(non_xml_body_document(), seed="s")
+    assert PDF_B64.encode() not in out
+    assert report.anonymize.non_xml_body == "file"
+    rc, err = run_cli(capsys, tmp_path, "synthesize", non_xml_body_document())
+    assert rc == 0 and "nonXMLBody" in err
