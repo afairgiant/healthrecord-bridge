@@ -280,11 +280,34 @@ NAMESPACE_HRB = uuid5(NAMESPACE_DNS, "healthrecord-bridge")
 id = uuid5(NAMESPACE_HRB, f"{resourceType}|{cda id root}|{cda id extension}")
 ```
 
-When a CDA entry has no `id`, the key is the document id plus the section code and the
-entry's position within the section instead. Either way, converting the same export twice
-produces byte-identical output, and converting a newer export that contains the same
-entries produces the same ids for them. An importer can therefore `INSERT ... ON CONFLICT
-(id) DO UPDATE` or use a FHIR `PUT` and get updates rather than duplicates.
+Ids are worked out after a whole document has been mapped, from the resources it produced,
+so an id never depends on where an entry sits in the document:
+
+- **A CDA id that several resources of one type claim.** If they all have the same
+  content, they are the same entry listed twice (a problem repeated inside an encounter
+  diagnosis) and become one resource under the plain id. If their content differs (Epic
+  sometimes puts one id on several different lab results), none gets the plain id: each is
+  keyed by the id plus its code and its time as written in the source, and its value only
+  when code and time are the same too. A reordered export cannot swap two results.
+- **An entry with no CDA id.** The key is the patient, the section and the entry's code,
+  time and value, not the document, so the same entry in another document or a newer export
+  gets the same id and merges instead of duplicating. An entry with no code and no time
+  has nothing to be recognised by and stays keyed by its document and position.
+
+Converting the same export twice produces byte-identical output, and converting a newer
+export that contains the same entries produces the same ids for them. An importer can
+therefore `INSERT ... ON CONFLICT (id) DO UPDATE` or use a FHIR `PUT` and get updates rather
+than duplicates.
+
+Limits:
+
+- A content key changes when the entry's code or time changes in the source, and for an
+  entry without an id also when its value changes (a corrected result), so such an edit
+  arrives as a new resource.
+- A CDA id that one resource claims in one export but several claim in another (a concern
+  act that gains a second problem observation) gets the plain id in the first and content
+  keys in the second.
+- A Patient or custodian Organization without an id is still keyed by the document.
 
 Each resource also carries:
 

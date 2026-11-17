@@ -57,7 +57,6 @@ def build_observation(
     obs: etree._Element,
     category_code: str,
     section_code: str | None,
-    *fallback_parts: str | int | None,
 ) -> dict | None:
     """Return an Observation or ``None`` when the element has no code at all."""
     code = ctx.concept(child(obs, "code"))
@@ -69,7 +68,7 @@ def build_observation(
     cat = category_code
     if _loinc_code(code) == SMOKING_STATUS_LOINC:
         cat = "social-history"
-    res = ctx.new_resource("Observation", obs, section_code, *fallback_parts)
+    res = ctx.new_resource("Observation", obs, section_code, what=code)
     res["status"] = _STATUS.get(status_code(obs) or "completed", "final")
     res["category"] = [observation_category(cat)]
     res["code"] = code

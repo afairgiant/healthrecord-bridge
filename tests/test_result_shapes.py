@@ -69,11 +69,18 @@ def labs(bundle: dict) -> list[dict]:
     return by_type(bundle)["Observation"]
 
 
+SHARED = CdaId("9.9", "SHARED")
+PQ = '<value xsi:type="PQ" value="100" unit="mmol/L"/>'
+
+
+def shared_id(code: str, *extra: str) -> str:
+    return resource_id("Observation", SHARED, f"http://loinc.org|{code}", "20260301", *extra)
+
+
 def test_one_cda_id_on_two_observations_keeps_both():
-    pq = '<value xsi:type="PQ" value="100" unit="mmol/L"/>'
     data = document(
-        organizer("ORG-1", observation("SHARED", loinc("2075-0"), pq))
-        + organizer("ORG-2", observation("SHARED", loinc("2885-2"), pq))
+        organizer("ORG-1", observation("SHARED", loinc("2075-0"), PQ))
+        + organizer("ORG-2", observation("SHARED", loinc("2885-2"), PQ))
     )
     bundle, report = convert_bytes(data, "snippet.xml")
     again, _ = convert_bytes(data, "snippet.xml")
@@ -81,8 +88,9 @@ def test_one_cda_id_on_two_observations_keeps_both():
     types = by_type(bundle)
     assert report.resource_counts["Observation"] == len(types["Observation"]) == 2
     chloride, protein = types["Observation"]
-    assert chloride["id"] == resource_id("Observation", CdaId("9.9", "SHARED"))
-    assert protein["id"] == resource_id("Observation", CdaId("9.9", "SHARED"), "30954-2", 1, 0)
+    # Neither gets the plain id: a shared id is keyed by each result's code and time.
+    assert chloride["id"] == shared_id("2075-0")
+    assert protein["id"] == shared_id("2885-2")
     assert chloride["identifier"] == protein["identifier"]
     reports = types["DiagnosticReport"]
     assert reports[0]["result"] == [{"reference": f"Observation/{chloride['id']}"}]
@@ -147,3 +155,40 @@ def test_null_coded_lab_keeps_its_narrative_name():
     assert b["code"]["text"] == "A1C"
     assert b["code"]["coding"][0]["display"] == "Hemoglobin A1c/Hemoglobin.total"
     assert EPIC_LRR in report.unmapped_code_systems
+
+
+def test_shared_id_does_not_depend_on_order():
+    chloride = organizer("ORG-1", observation("SHARED", loinc("2075-0"), PQ))
+    protein = organizer("ORG-2", observation("SHARED", loinc("2885-2"), PQ))
+    ids = []
+    for entries in (chloride + protein, protein + chloride):
+        bundle, _ = convert_bytes(document(entries), "snippet.xml")
+        ids.append({o["code"]["coding"][0]["code"]: o["id"] for o in labs(bundle)})
+    assert ids[0] == ids[1]  # an upsert after a reordered export updates the same results
+
+
+def test_shared_id_with_the_same_code_and_time_is_told_apart_by_value():
+    data = document(
+        organizer(
+            "ORG-1",
+            observation("SHARED", loinc("2075-0"), PQ),
+            observation("SHARED", loinc("2075-0"), PQ.replace("100", "101")),
+        )
+    )
+    bundle, _ = convert_bytes(data, "snippet.xml")
+    assert [o["id"] for o in labs(bundle)] == [
+        shared_id("2075-0", "100 mmol/L"),
+        shared_id("2075-0", "101 mmol/L"),
+    ]
+
+
+def test_an_entry_repeated_under_one_id_is_one_resource():
+    """The same result listed twice (same id and content) is one fact, under its plain id."""
+    repeated = observation("OBS-1", loinc("2075-0"), PQ)
+    data = document(organizer("ORG-1", repeated) + organizer("ORG-2", repeated))
+    bundle, report = convert_bytes(data, "snippet.xml")
+    (obs,) = labs(bundle)
+    assert obs["id"] == resource_id("Observation", CdaId("9.9", "OBS-1"))
+    reports = by_type(bundle)["DiagnosticReport"]
+    assert [r["result"] for r in reports] == [[{"reference": f"Observation/{obs['id']}"}]] * 2
+    assert report.resource_counts["Observation"] == 1

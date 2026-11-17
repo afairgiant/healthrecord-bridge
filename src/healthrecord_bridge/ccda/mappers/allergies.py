@@ -77,8 +77,8 @@ def map_allergies(ctx: Context, section: Section, sr: SectionReport) -> list[dic
         if not observations:
             sr.skipped.append(SkippedEntry("no allergy observation found", ordinal))
             continue
-        for sub, obs in enumerate(observations):
-            res = _allergy(ctx, stmt, obs, section.code, ordinal, sub)
+        for obs in observations:
+            res = _allergy(ctx, stmt, obs, section.code)
             if res is None:
                 sr.skipped.append(
                     SkippedEntry("allergy observation has no substance or code", ordinal)
@@ -99,8 +99,6 @@ def _allergy(
     act: etree._Element,
     obs: etree._Element,
     section_code: str | None,
-    ordinal: int,
-    sub: int,
 ) -> dict | None:
     entity = find(obs, "c:participant/c:participantRole/c:playingEntity")
     code = ctx.concept(child(entity, "code"))
@@ -118,7 +116,13 @@ def _allergy(
             return None
         code = {"text": text}
     id_source = obs if ctx.ids_of(obs) else act
-    res = ctx.new_resource("AllergyIntolerance", id_source, section_code, ordinal, sub)
+    res = ctx.new_resource(
+        "AllergyIntolerance",
+        id_source,
+        section_code,
+        what=code,
+        when=child(obs, "effectiveTime"),
+    )
     res["patient"] = ctx.patient_ref
 
     kind, cat = _type_and_category(value_el)

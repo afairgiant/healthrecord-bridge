@@ -16,7 +16,7 @@ import os
 from collections.abc import Iterator
 from pathlib import Path
 
-from ..fhir.bundle import make_bundle, merge_bundles
+from ..fhir.bundle import dedupe, make_bundle, merge_bundles
 from . import xdm
 from .anonymize import AnonymizeReport, anonymize, anonymize_file
 from .context import Context
@@ -85,6 +85,8 @@ def convert_document(
         report.sections.append(sr)
         resources.extend(produced)
 
+    ctx.assign_ids()
+    resources = dedupe(resources)
     resources.append(map_document_reference(ctx, custodian))
     provenance = map_provenance(ctx, resources)
     if provenance is not None:

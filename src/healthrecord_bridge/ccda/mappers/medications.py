@@ -50,7 +50,7 @@ def map_medications(ctx: Context, section: Section, sr: SectionReport) -> list[d
                 )
                 continue
             sa = nested
-        res = _medication(ctx, sa, section.code, ordinal)
+        res = _medication(ctx, sa, section.code)
         if res is None:
             sr.skipped.append(SkippedEntry("no medication code or name", ordinal))
             continue
@@ -58,9 +58,7 @@ def map_medications(ctx: Context, section: Section, sr: SectionReport) -> list[d
     return out
 
 
-def _medication(
-    ctx: Context, sa: etree._Element, section_code: str | None, ordinal: int
-) -> dict | None:
+def _medication(ctx: Context, sa: etree._Element, section_code: str | None) -> dict | None:
     material = find(sa, "c:consumable/c:manufacturedProduct/c:manufacturedMaterial")
     med = ctx.concept(child(material, "code"))
     name = _material_name(material)
@@ -75,7 +73,7 @@ def _medication(
     sc = status_code(sa)
     is_statement = mood(sa) == "EVN" and sc in _STATEMENT_STATUS
     rtype = "MedicationStatement" if is_statement else "MedicationRequest"
-    res = ctx.new_resource(rtype, sa, section_code, ordinal)
+    res = ctx.new_resource(rtype, sa, section_code, what=med)
     res["subject"] = ctx.patient_ref
     res["medicationCodeableConcept"] = med
 

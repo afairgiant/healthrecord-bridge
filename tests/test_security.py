@@ -81,7 +81,7 @@ def test_referenced_narrative_is_resolved_once(monkeypatch):
 
     monkeypatch.setattr(narrative, "text_of", counting_text_of)
     entry = (
-        '<entry><substanceAdministration classCode="SBADM" moodCode="EVN">'
+        '<entry><substanceAdministration classCode="SBADM" moodCode="EVN"><id root="9.9.{n}"/>'
         '<text><reference value="#sig"/></text><statusCode code="active"/>'
         "<consumable><manufacturedProduct><manufacturedMaterial/>"
         "</manufacturedProduct></consumable></substanceAdministration></entry>"
@@ -91,7 +91,7 @@ def test_referenced_narrative_is_resolved_once(monkeypatch):
         "<recordTarget><patientRole><patient><name><given>A</given></name></patient>"
         "</patientRole></recordTarget><component><structuredBody><component><section>"
         '<code code="10160-0"/><text><paragraph ID="sig">Take one daily</paragraph></text>'
-        + entry * 50
+        + "".join(entry.replace("{n}", str(n)) for n in range(50))
         + "</section></component></structuredBody></component></ClinicalDocument>"
     )
     bundle, _ = convert_bytes(doc.encode())

@@ -40,3 +40,10 @@ result observations with a null code and no text, which the converter drops.
 that MyChart emits (`MachineReadable_XDMFormat/IHE_XDM/SUBSET01/DOC0001.XML` plus stub
 `INDEX.HTM`, `README.TXT` and `METADATA.XML`). It is used to check that archive input
 yields the same bundle as the bare XML.
+
+## expected_ids.json
+
+The resource ids each fixture converts to, written by the converter itself. `tests/test_ids.py`
+compares against it, so a change to how ids are formed shows up as a test failure. Update it
+only when the change is intended, and record it in the CHANGELOG: users who upsert by id
+see changed ids as new resources.

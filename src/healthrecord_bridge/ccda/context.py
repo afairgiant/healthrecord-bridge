@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from lxml import etree
 
 from . import codes
 from .datetime_utils import ParsedTs, parse_ts
-from .document import CdaDocument, first_id
-from .ids import CdaId, fallback_id, identifier, resource_id
+from .document import CdaDocument
+from .ids import CdaId, content_id, fallback_id, identifier, resource_id
 from .narrative import referenced_text
 from .report import DocumentReport
-from .xml import attr, child, children, xsi_type
+from .xml import attr, child, children, text_of, xsi_type
 
 HRB_TAG_SYSTEM = "urn:healthrecord-bridge"
 
@@ -28,8 +29,8 @@ class Context:
     unmapped: set[str] = field(default_factory=set)
     truncated_timestamps: int = 0
     invalid_timestamps: int = 0
-    id_owners: dict[tuple[str, CdaId], etree._Element] = field(default_factory=dict)
-    """Element that first claimed each (resource type, CDA id) pair."""
+    claims: list[_Claim] = field(default_factory=list)
+    """Every resource made by ``new_resource``, for ``assign_ids`` to give its final id."""
 
     # ---- codes and text ---------------------------------------------------------
 
@@ -123,43 +124,88 @@ class Context:
         self,
         resource_type: str,
         el: etree._Element | None,
-        *fallback_parts: str | int | None,
+        section_code: str | None,
+        *,
+        what: dict | None,
+        when: etree._Element | None = None,
     ) -> dict:
-        """Skeleton with deterministic ``id``, ``identifier``, ``meta`` and subject.
+        """Skeleton with ``identifier`` and ``meta``, and a provisional ``id``.
 
-        The id derives from the element's first ``id``; without one it derives
-        from the document id plus ``fallback_parts`` (section code, ordinals).
-        When another element of the same resource type already used that CDA id
-        (Epic reuses ids inside result organizers) the parts, or failing those
-        the element's path, are added so the two resources stay distinct.
+        The resource's content is recorded for ``assign_ids``: ``what`` (the concept
+        that names the entry, or ``None``), ``when`` (by default the element's
+        ``effectiveTime``) and the element's ``value``. Build references with
+        ``reference()`` as usual; ``assign_ids`` rewrites them.
         """
         cda_ids = self.ids_of(el)
-        parts = [str(p) for p in fallback_parts if p is not None]
-        if cda_ids and el is not None:
-            owner = self.id_owners.setdefault((resource_type, cda_ids[0]), el)
-            if owner is el:
-                rid = resource_id(resource_type, cda_ids[0])
-            else:
-                rid = resource_id(resource_type, cda_ids[0], *(parts or [_path_of(el)]))
-        else:
-            rid = fallback_id(resource_type, self.doc.id, *parts)
+        content = (
+            _concept_key(what),
+            _time_key(when if when is not None else child(el, "effectiveTime")),
+            _value_key(child(el, "value")),
+        )
         resource: dict = {
             "resourceType": resource_type,
-            "id": rid,
+            "id": f"{_PENDING}{len(self.claims)}",
             "meta": self.meta(),
         }
         if cda_ids:
             resource["identifier"] = [identifier(c) for c in cda_ids]
+        cda_id = cda_ids[0] if cda_ids else None
+        self.claims.append(_Claim(resource, cda_id, section_code or "", content))
         return resource
+
+    def assign_ids(self) -> None:
+        """Give every resource from ``new_resource`` its final id and rewrite references.
+
+        Call it once the sections are mapped, before anything else references them. Two
+        resources can end up with one id (the same entry repeated); merge them with
+        ``fhir.bundle.dedupe``.
+
+        The ids are worked out from everything the document produced, so none depends on
+        an entry's position:
+
+        - A CDA id that only one resource of a type claims, or that every claim makes with
+          the same content, is the plain ``resource_id``. Identical claims are the same
+          entry repeated (a problem inside an encounter diagnosis) and become one resource.
+        - A CDA id that claims with different content share (Epic puts one id on several
+          lab results; an act's id stands in for each of its observations) adds each
+          claim's code and time, and its value only when code and time are the same.
+        - Without a CDA id the key is the patient, section, code, time and value, so the
+          same entry in another document or export gets the same id. An entry with no code
+          and no time has nothing to be recognised by and stays within its document.
+        """
+        contents: defaultdict[tuple[str, CdaId], set[tuple[str, str, str]]] = defaultdict(set)
+        for c in self.claims:
+            if c.cda_id is not None:
+                contents[(c.type, c.cda_id)].add(c.content)
+        patient = self.patient_ref.get("reference", "")
+        blank: Counter[tuple[str, str]] = Counter()
+        renamed: dict[str, str] = {}
+        for c in self.claims:
+            what, when, value = c.content
+            if c.cda_id is not None:
+                shared = contents[(c.type, c.cda_id)]
+                same_code_and_time = [k for k in shared if k[:2] == (what, when)]
+                if len(shared) == 1:
+                    rid = resource_id(c.type, c.cda_id)
+                elif len(same_code_and_time) == 1:
+                    rid = resource_id(c.type, c.cda_id, what, when)
+                else:
+                    rid = resource_id(c.type, c.cda_id, what, when, value)
+            elif what or when:
+                rid = content_id(c.type, patient, c.section, what, when, value)
+            else:
+                blank[(c.type, c.section)] += 1
+                rid = fallback_id(c.type, self.doc.id, c.section, f"#{blank[(c.type, c.section)]}")
+            renamed[f"{c.type}/{c.resource['id']}"] = f"{c.type}/{rid}"
+            c.resource["id"] = rid
+        # Only mapped resources can hold a provisional reference.
+        _rewrite_references([c.resource for c in self.claims], renamed)
 
     def meta(self) -> dict:
         return {
             "source": f"urn:healthrecord-bridge:ccda:{self.doc.id}",
             "tag": [{"system": HRB_TAG_SYSTEM, "code": "ccda"}],
         }
-
-    def first_cda_id(self, el: etree._Element | None) -> CdaId | None:
-        return first_id(el)
 
     def reference(self, resource: dict, display: str | None = None) -> dict:
         ref: dict = {"reference": f"{resource['resourceType']}/{resource['id']}"}
@@ -168,8 +214,68 @@ class Context:
         return ref
 
 
-def _path_of(el: etree._Element) -> str:
-    return el.getroottree().getpath(el)
+_PENDING = "hrb-pending-"
+
+
+@dataclass(slots=True)
+class _Claim:
+    resource: dict
+    cda_id: CdaId | None
+    section: str
+    content: tuple[str, str, str]
+    """Code, time and value keys."""
+
+    @property
+    def type(self) -> str:
+        return str(self.resource["resourceType"])
+
+
+def _rewrite_references(node: object, renamed: dict[str, str]) -> None:
+    """Point references at final ids; a list of references keeps each target once."""
+    if isinstance(node, dict):
+        ref = node.get("reference")
+        if isinstance(ref, str) and ref in renamed:
+            node["reference"] = renamed[ref]
+        for v in node.values():
+            _rewrite_references(v, renamed)
+    elif isinstance(node, list):
+        for v in node:
+            _rewrite_references(v, renamed)
+        if node and all(isinstance(v, dict) and "reference" in v for v in node):
+            # A repeated entry now shares one id; keep one reference to it.
+            node[:] = list({(v["reference"], v.get("display")): v for v in node}.values())
+
+
+def _concept_key(cc: dict | None) -> str:
+    """``system|code`` of the first coding with a code, else the concept's text."""
+    if not cc:
+        return ""
+    for c in cc.get("coding", []):
+        if c.get("code"):
+            return f"{c.get('system', '')}|{c['code']}"
+    return " ".join(str(cc.get("text") or "").split()).casefold()
+
+
+def _value_key(el: etree._Element | None) -> str:
+    """A result value as written: ``system|code``, ``value unit``, a range, or its text."""
+    if el is None or attr(el, "nullFlavor"):
+        return ""
+    if code := attr(el, "code"):
+        return f"{attr(el, 'codeSystem') or ''}|{code}"
+    if (number := attr(el, "value")) is not None:
+        return f"{number} {attr(el, 'unit') or ''}".strip()
+    bounds = [_value_key(child(el, b)) for b in ("low", "high")]
+    if any(bounds):
+        return "..".join(bounds)
+    return (text_of(el) or "").casefold()
+
+
+def _time_key(el: etree._Element | None) -> str:
+    """The raw TS of a point in time, else of its ``low``, else of its ``center``."""
+    for e in (el, child(el, "low"), child(el, "center")):
+        if v := attr(e, "value"):
+            return v
+    return ""
 
 
 def status_code(el: etree._Element | None) -> str | None:

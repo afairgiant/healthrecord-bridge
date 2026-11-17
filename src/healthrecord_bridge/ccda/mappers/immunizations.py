@@ -21,7 +21,7 @@ def map_immunizations(ctx: Context, section: Section, sr: SectionReport) -> list
         if local_name(stmt) != "substanceAdministration":
             sr.skipped.append(SkippedEntry(f"unsupported statement {local_name(stmt)}", ordinal))
             continue
-        res = _immunization(ctx, stmt, section.code, ordinal)
+        res = _immunization(ctx, stmt, section.code)
         if res is None:
             sr.skipped.append(SkippedEntry("no vaccine code or name", ordinal))
             continue
@@ -29,9 +29,7 @@ def map_immunizations(ctx: Context, section: Section, sr: SectionReport) -> list
     return out
 
 
-def _immunization(
-    ctx: Context, sa: etree._Element, section_code: str | None, ordinal: int
-) -> dict | None:
+def _immunization(ctx: Context, sa: etree._Element, section_code: str | None) -> dict | None:
     material = find(sa, "c:consumable/c:manufacturedProduct/c:manufacturedMaterial")
     vaccine = ctx.concept(child(material, "code"))
     name = child_text(material, "name")
@@ -42,7 +40,7 @@ def _immunization(
         vaccine = {"text": text}
     elif name and not concept_text(vaccine):
         vaccine["text"] = name
-    res = ctx.new_resource("Immunization", sa, section_code, ordinal)
+    res = ctx.new_resource("Immunization", sa, section_code, what=vaccine)
     sc = status_code(sa)
     if negated(sa) or sc in {"cancelled", "aborted"}:
         res["status"] = "not-done"
