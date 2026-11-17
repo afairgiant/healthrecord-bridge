@@ -66,14 +66,14 @@ def map_encounters(ctx: Context, section: Section, sr: SectionReport) -> list[di
         if local_name(stmt) != "encounter":
             sr.skipped.append(SkippedEntry(f"unsupported statement {local_name(stmt)}", ordinal))
             continue
-        out.append(_encounter(ctx, stmt, section.code, ordinal))
+        out.append(_encounter(ctx, stmt, section.code))
     return out
 
 
-def _encounter(ctx: Context, enc: etree._Element, section_code: str | None, ordinal: int) -> dict:
-    res = ctx.new_resource("Encounter", enc, section_code, ordinal)
-    res["status"] = _STATUS.get(status_code(enc) or "completed", "finished")
+def _encounter(ctx: Context, enc: etree._Element, section_code: str | None) -> dict:
     type_cc = ctx.concept(child(enc, "code"))
+    res = ctx.new_resource("Encounter", enc, section_code, what=type_cc)
+    res["status"] = _STATUS.get(status_code(enc) or "completed", "finished")
     cls = _encounter_class(type_cc)
     res["class"] = {"system": V3_ACT_CODE, "code": cls, "display": _CLASS_DISPLAY.get(cls, cls)}
     if type_cc:

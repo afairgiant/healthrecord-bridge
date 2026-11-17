@@ -30,8 +30,8 @@ def map_vitals(ctx: Context, section: Section, sr: SectionReport) -> list[dict]:
             sr.skipped.append(SkippedEntry(f"unsupported statement {local_name(stmt)}", ordinal))
             continue
         produced = 0
-        for sub, obs in enumerate(components):
-            res = build_observation(ctx, obs, "vital-signs", section.code, ordinal, sub)
+        for obs in components:
+            res = build_observation(ctx, obs, "vital-signs", section.code)
             if res is not None:
                 out.append(res)
                 produced += 1

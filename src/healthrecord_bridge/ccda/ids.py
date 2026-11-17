@@ -42,26 +42,37 @@ def _urn_prefix(root: str) -> str:
     return ""
 
 
-def resource_id(resource_type: str, cda_id: CdaId, *discriminator: str | int) -> str:
+def resource_id(resource_type: str, cda_id: CdaId, *discriminator: str) -> str:
     """Deterministic id: ``uuid5(NAMESPACE_HRB, "<resourceType>|<root>|<extension>")``.
 
-    ``discriminator`` parts (section code and ordinals, or an element path) are
-    appended after an ``@`` marker when a document reuses one CDA id for several
-    elements, so each of them still gets a stable id of its own.
+    ``discriminator`` parts (the entry's code and time) are appended after an ``@``
+    marker when a document puts one CDA id on several elements, so each of them gets
+    a stable id of its own that does not depend on their order.
     """
     key = f"{resource_type}|{cda_id.root}|{cda_id.extension or ''}"
     if discriminator:
-        key += "|@" + "|".join(str(p) for p in discriminator)
+        key += "|@" + "|".join(discriminator)
     return str(uuid.uuid5(NAMESPACE_HRB, key))
 
 
-def fallback_id(resource_type: str, document_id: CdaId, *parts: str | int) -> str:
-    """Deterministic id for entries that carry no ``id`` of their own.
+def content_id(resource_type: str, patient: str, section: str, *content: str) -> str:
+    """Deterministic id for a section entry that carries no ``id`` of its own.
 
-    The key is the document id followed by caller-supplied parts such as the
-    section code and the entry ordinal within that section.
+    The key is the patient, the section and the entry's content (its code and time),
+    not the document, so the same entry in another document or a newer export gets
+    the same id.
     """
-    tail = "|".join(str(p) for p in parts)
+    tail = "|".join(content)
+    return str(uuid.uuid5(NAMESPACE_HRB, f"{resource_type}|#content|{patient}|{section}|{tail}"))
+
+
+def fallback_id(resource_type: str, document_id: CdaId, *parts: str) -> str:
+    """Document-scoped id: for a header resource (Patient, custodian) without an ``id``,
+    and for a section entry with nothing else to key on (no id, code or time).
+
+    The key is the document id followed by caller-supplied parts.
+    """
+    tail = "|".join(parts)
     key = f"{resource_type}|{document_id.root}|{document_id.extension or ''}|{tail}"
     return str(uuid.uuid5(NAMESPACE_HRB, key))
 

@@ -28,7 +28,7 @@ def map_results(ctx: Context, section: Section, sr: SectionReport) -> list[dict]
             sr.skipped.append(SkippedEntry("entry has no clinical statement", ordinal))
             continue
         if local_name(stmt) == "observation":
-            obs = build_observation(ctx, stmt, "laboratory", section.code, ordinal, 0)
+            obs = build_observation(ctx, stmt, "laboratory", section.code)
             if obs is None:
                 sr.skipped.append(SkippedEntry("observation has no code", ordinal))
             else:
@@ -39,14 +39,14 @@ def map_results(ctx: Context, section: Section, sr: SectionReport) -> list[dict]
             continue
         observations: list[dict] = []
         comps = [o for c in children(stmt, "component") for o in children(c, "observation")]
-        for sub, comp in enumerate(comps):
-            obs = build_observation(ctx, comp, "laboratory", section.code, ordinal, sub)
+        for comp in comps:
+            obs = build_observation(ctx, comp, "laboratory", section.code)
             if obs is not None:
                 observations.append(obs)
         if not observations:
             sr.skipped.append(SkippedEntry("organizer has no codable observations", ordinal))
             continue
-        report = _report(ctx, stmt, comps, observations, section.code, ordinal)
+        report = _report(ctx, stmt, comps, observations, section.code)
         out.append(report)
         out.extend(observations)
     return out
@@ -58,12 +58,11 @@ def _report(
     comps: list[etree._Element],
     observations: list[dict],
     section_code: str | None,
-    ordinal: int,
 ) -> dict:
-    res = ctx.new_resource("DiagnosticReport", org, section_code, ordinal)
+    code = ctx.concept(child(org, "code"))
+    res = ctx.new_resource("DiagnosticReport", org, section_code, what=code)
     res["status"] = _REPORT_STATUS.get(status_code(org) or "completed", "final")
     res["category"] = [simple_concept(V2_0074, "LAB", "Laboratory")]
-    code = ctx.concept(child(org, "code"))
     if code is None:
         # Many exports leave the organizer code null; the narrative row the first
         # component points at usually names the panel.

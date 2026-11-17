@@ -22,12 +22,15 @@ def merge_bundles(bundles: list[dict]) -> dict:
     Order is first-seen order, so a resource replaced by a later document keeps
     its original position in the output.
     """
+    return make_bundle(dedupe([e["resource"] for b in bundles for e in b.get("entry", [])]))
+
+
+def dedupe(resources: list[dict]) -> list[dict]:
+    """One resource per (resourceType, id): the later wins, in first-seen position."""
     merged: dict[tuple[str, str], dict] = {}
-    for b in bundles:
-        for entry in b.get("entry", []):
-            r = entry["resource"]
-            merged[(r["resourceType"], r["id"])] = r
-    return make_bundle(list(merged.values()))
+    for r in resources:
+        merged[(r["resourceType"], r["id"])] = r
+    return list(merged.values())
 
 
 def resources_by_type(bundle: dict) -> dict[str, list[dict]]:

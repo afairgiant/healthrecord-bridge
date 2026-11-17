@@ -8,6 +8,20 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- Resource ids no longer depend on an entry's position (#12). Ids are now assigned after the
+  whole document is mapped, from the resources it produced:
+  - A CDA id that several resources of one type claim with different content (Epic does
+    this for some lab results) is keyed by each one's code and time (and value, if those
+    match), instead of "the first one keeps the plain id". That let a reordered export swap
+    two results on upsert, or let one overwrite another when several documents were merged.
+  - The same entry listed twice under one id is now one resource instead of two.
+  - An entry with no CDA id is keyed by patient, section, code, time and value instead of
+    document and position, so the same entry in another document or a newer export gets
+    the same id. Entries with no code and no time stay keyed by their document.
+
+  **This changes the ids of exactly those resources**; every other id is unchanged (in the
+  test fixtures, 4 of 573). Importers that upsert by id keep the old rows for them as stale
+  duplicates once.
 - The project moved to `afairgiant/healthrecord-bridge`: the package's Homepage, Issues and
   Changelog URLs point there, and Alex Fair is listed as maintainer.
 - Patient: the US Core `birthsex` extension is no longer derived from

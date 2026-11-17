@@ -30,7 +30,7 @@ def map_procedures(ctx: Context, section: Section, sr: SectionReport) -> list[di
         if local_name(stmt) not in {"procedure", "act", "observation"}:
             sr.skipped.append(SkippedEntry(f"unsupported statement {local_name(stmt)}", ordinal))
             continue
-        res = _procedure(ctx, stmt, section.code, ordinal)
+        res = _procedure(ctx, stmt, section.code)
         if res is None:
             sr.skipped.append(SkippedEntry("procedure has no code", ordinal))
             continue
@@ -38,16 +38,14 @@ def map_procedures(ctx: Context, section: Section, sr: SectionReport) -> list[di
     return out
 
 
-def _procedure(
-    ctx: Context, el: etree._Element, section_code: str | None, ordinal: int
-) -> dict | None:
+def _procedure(ctx: Context, el: etree._Element, section_code: str | None) -> dict | None:
     code = ctx.concept(child(el, "code"))
     if code is None:
         text = ctx.entry_text(el)
         if not text:
             return None
         code = {"text": text}
-    res = ctx.new_resource("Procedure", el, section_code, ordinal)
+    res = ctx.new_resource("Procedure", el, section_code, what=code)
     res["subject"] = ctx.patient_ref
     if negated(el):
         res["status"] = "not-done"

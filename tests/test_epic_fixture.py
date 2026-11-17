@@ -289,10 +289,14 @@ def test_component_ids_reused_by_epic_stay_distinct(converted, root):
         organizers[i].findall("c:component/c:observation", NS)[j].find("c:code", NS).get("code")
         for i, j in placed
     ]
-    assert shared[0]["id"] == resource_id("Observation", CdaId(EPIC_OBS_ROOT, ext))
-    assert shared[1]["id"] == resource_id(
-        "Observation", CdaId(EPIC_OBS_ROOT, ext), "30954-2", 10, 48
-    )
+    # Neither keeps the plain id; each is keyed by its own code and time, not its position.
+    for obs, (i, j) in zip(shared, placed, strict=True):
+        el = organizers[i].findall("c:component/c:observation", NS)[j]
+        content = (
+            f"http://loinc.org|{el.find('c:code', NS).get('code')}",
+            el.find("c:effectiveTime/c:low", NS).get("value"),  # Epic gives low/high
+        )
+        assert obs["id"] == resource_id("Observation", CdaId(EPIC_OBS_ROOT, ext), *content)
 
 
 def test_medications_keep_rxnorm_and_translations(converted, root):

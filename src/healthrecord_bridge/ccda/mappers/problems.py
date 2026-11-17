@@ -36,8 +36,8 @@ def map_problems(ctx: Context, section: Section, sr: SectionReport) -> list[dict
         if not observations:
             sr.skipped.append(SkippedEntry("no problem observation found", ordinal))
             continue
-        for sub, obs in enumerate(observations):
-            res = _condition(ctx, stmt, obs, section.code, ordinal, sub)
+        for obs in observations:
+            res = _condition(ctx, stmt, obs, section.code)
             if res is None:
                 sr.skipped.append(SkippedEntry("problem observation has no code", ordinal))
                 continue
@@ -59,8 +59,6 @@ def _condition(
     act: etree._Element,
     obs: etree._Element,
     section_code: str | None,
-    ordinal: int,
-    sub: int,
 ) -> dict | None:
     code = ctx.concept(child(obs, "value"))
     if code is None:
@@ -68,13 +66,19 @@ def _condition(
         if not text:
             return None
         code = {"text": text}
-    id_source = obs if ctx.ids_of(obs) else act
-    res = ctx.new_resource("Condition", id_source, section_code, ordinal, sub)
-    res["subject"] = ctx.patient_ref
     obs_eff = child(obs, "effectiveTime")
     eff = obs_eff
     if eff is None or attr(eff, "nullFlavor"):
         eff = child(act, "effectiveTime")  # onset only: see below
+    id_source = obs if ctx.ids_of(obs) else act
+    res = ctx.new_resource(
+        "Condition",
+        id_source,
+        section_code,
+        what=code,
+        when=eff,
+    )
+    res["subject"] = ctx.patient_ref
     # Resolution comes from the Problem Observation alone. The concern act's high is when
     # the concern stopped being tracked, not when the problem resolved.
     high = find(obs_eff, "c:high")

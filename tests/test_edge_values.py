@@ -8,6 +8,7 @@ import pytest
 
 from conftest import by_type
 from healthrecord_bridge.ccda import convert_bytes
+from healthrecord_bridge.ccda.ids import CdaId, resource_id
 from healthrecord_bridge.fhir.ndjson import write_ndjson
 
 DOCUMENT = """<?xml version="1.0" encoding="UTF-8"?>
@@ -426,3 +427,38 @@ def test_document_time_edge_cases(effective, author, expected):
     bundle, _ = convert_bytes(data, "snippet.xml")
     (prov,) = by_type(bundle)["Provenance"]
     assert prov["recorded"] == expected
+
+
+def concern_without_observation_ids(*values: str) -> str:
+    observations = "".join(
+        '<entryRelationship typeCode="SUBJ"><observation classCode="OBS" moodCode="EVN">'
+        '<templateId root="2.16.840.1.113883.10.20.22.4.4"/>'
+        '<code code="55607006" codeSystem="2.16.840.1.113883.6.96"/>'
+        '<statusCode code="completed"/><effectiveTime><low value="20200101"/></effectiveTime>'
+        f'<value xsi:type="CD" code="{v}" codeSystem="2.16.840.1.113883.6.96"/>'
+        "</observation></entryRelationship>"
+        for v in values
+    )
+    return (
+        '<entry><act classCode="ACT" moodCode="EVN">'
+        '<templateId root="2.16.840.1.113883.10.20.22.4.3"/><id root="9.9" extension="ACT-1"/>'
+        '<code code="CONC" codeSystem="2.16.840.1.113883.5.6"/><statusCode code="active"/>'
+        f"{observations}</act></entry>"
+    )
+
+
+def test_concern_act_id_shared_by_its_observations_does_not_depend_on_order():
+    def ids(*values):
+        conditions = by_type(convert(PROBLEMS, concern_without_observation_ids(*values)))
+        return {c["code"]["coding"][0]["code"]: c["id"] for c in conditions["Condition"]}
+
+    act = CdaId("9.9", "ACT-1")
+    both = ids("38341003", "44054006")
+    assert both == {
+        code: resource_id("Condition", act, f"http://snomed.info/sct|{code}", "20200101")
+        for code in ("38341003", "44054006")
+    }
+    assert both == ids("44054006", "38341003")
+    # A single observation still takes the act's plain id.
+    (alone,) = ids("38341003").values()
+    assert alone == resource_id("Condition", act)
