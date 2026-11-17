@@ -228,8 +228,11 @@ print(report.summary(), report.entries_replaced, report.unrecognized_sections)
 - Any other zip with C-CDA XML files somewhere inside.
 
 Archive contents are treated as untrusted. XML is parsed with entity resolution and network
-access disabled, documents with a DOCTYPE or entity declarations are rejected, oversized
-members are refused, and anything whose root is not a `ClinicalDocument` is rejected.
+access disabled, documents with a DOCTYPE or entity declarations are rejected, and anything
+whose root is not a `ClinicalDocument` is rejected. A document over 256 MB (a zip member
+uncompressed, or a bare XML file) is refused, and so is a zip with more than 10,000 XML
+documents or more than 1 GB of XML in total; zip limits are checked before anything is
+extracted.
 
 ## What is mapped
 
@@ -306,6 +309,7 @@ issue with what it reports.
 ```sh
 uv sync --all-extras
 uv run ruff check . && uv run ruff format --check .
+uv run mypy
 uv run pytest
 HRB_SYNTHEA_DIR=/path/to/synthea/ccda uv run pytest -m slow   # full 1,180 document smoke test
 ```

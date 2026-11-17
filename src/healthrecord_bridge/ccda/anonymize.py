@@ -20,11 +20,13 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
+from typing import TypeGuard
 
 from lxml import etree
 
 from .document import parse_xml
 from .ids import _OID_RE, _UUID_RE
+from .xdm import read_xml_file
 from .xml import HL7_NS, attr, child, find, findall, local_name, q, xsi_type
 
 PATIENT_GIVEN = "Alex"
@@ -374,7 +376,7 @@ def anonymize(xml_bytes: bytes, *, seed: str | None = None) -> tuple[bytes, Anon
 
 def anonymize_file(src: Path, dst: Path, seed: str | None = None) -> AnonymizeReport:
     """Anonymize one XML file into another."""
-    out, report = anonymize(Path(src).read_bytes(), seed=seed)
+    out, report = anonymize(read_xml_file(src), seed=seed)
     Path(dst).write_bytes(out)
     return report
 
@@ -757,9 +759,9 @@ def _value_kind(el: etree._Element) -> str:
     return "ts" if local_name(typed) in _TIME_ELEMENTS else "unknown"
 
 
-def _has_text(text: str | None) -> bool:
+def _has_text(text: str | None) -> TypeGuard[str]:
     """Whether ``text`` has anything besides indentation worth scanning."""
-    return bool(text) and not text.isspace()
+    return bool(text and not text.isspace())
 
 
 def _holds_file(el: etree._Element) -> bool:

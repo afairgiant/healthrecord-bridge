@@ -22,6 +22,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering :: Medical Science Apps.",
   "Topic :: Software Development :: Libraries",
   "Typing :: Typed",
@@ -37,7 +38,7 @@ Changelog = "https://github.com/barkerd427/healthrecord-bridge/blob/main/CHANGEL
 hrb = "healthrecord_bridge.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "types-lxml>=2025.3"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/healthrecord_bridge"]
@@ -56,6 +57,16 @@ ignore = ["RUF012"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011"]
+
+[tool.mypy]
+files = ["src"]
+python_version = "3.11"
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+strict_equality = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -14,7 +14,11 @@ from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 
 MAX_MEMBER_BYTES = 256 * 1024 * 1024
-"""Members larger than this (uncompressed) are refused to avoid zip bombs."""
+"""A document larger than this (a zip member uncompressed, or a bare XML file) is refused."""
+MAX_DOCUMENTS = 10_000
+"""A zip with more XML documents than this is refused."""
+MAX_TOTAL_BYTES = 1024 * 1024 * 1024
+"""A zip whose XML documents add up to more than this (uncompressed) is refused."""
 
 _SKIP_NAMES = {"metadata.xml", "index.htm", "index.html", "readme.txt"}
 
@@ -44,14 +48,38 @@ def iter_xml_members(zf: zipfile.ZipFile) -> Iterator[zipfile.ZipInfo]:
 def iter_documents(path: str | os.PathLike[str]) -> Iterator[tuple[str, bytes]]:
     """Yield ``(member name, bytes)`` for every candidate XML in the zip.
 
-    Members are checked against ``MAX_MEMBER_BYTES`` before extraction.
+    The members are checked against ``MAX_DOCUMENTS``, ``MAX_TOTAL_BYTES`` and
+    ``MAX_MEMBER_BYTES`` before anything is extracted. The sizes come from the zip's
+    directory, and ``zipfile`` never returns more than a member's declared size.
     """
+    name = Path(path).name
     with zipfile.ZipFile(path) as zf:
-        for info in iter_xml_members(zf):
+        members = list(iter_xml_members(zf))
+        if len(members) > MAX_DOCUMENTS:
+            raise ValueError(
+                f"{name} has {len(members)} XML documents, over the {MAX_DOCUMENTS} limit"
+            )
+        total = sum(info.file_size for info in members)
+        if total > MAX_TOTAL_BYTES:
+            raise ValueError(
+                f"{name} holds {total} bytes of XML, over the {MAX_TOTAL_BYTES} byte limit"
+            )
+        for info in members:
             if info.file_size > MAX_MEMBER_BYTES:
                 raise ValueError(
-                    f"{Path(path).name}:{info.filename} is {info.file_size} bytes, "
+                    f"{name}:{info.filename} is {info.file_size} bytes, "
                     f"over the {MAX_MEMBER_BYTES} byte limit"
                 )
+        for info in members:
             with zf.open(info) as fh:
-                yield f"{Path(path).name}:{info.filename}", fh.read(MAX_MEMBER_BYTES + 1)
+                yield f"{name}:{info.filename}", fh.read(MAX_MEMBER_BYTES + 1)
+
+
+def read_xml_file(path: str | os.PathLike[str]) -> bytes:
+    """Read a bare XML file, refusing one over ``MAX_MEMBER_BYTES`` like a zip member."""
+    p = Path(path)
+    with p.open("rb") as fh:
+        data = fh.read(MAX_MEMBER_BYTES + 1)
+    if len(data) > MAX_MEMBER_BYTES:
+        raise ValueError(f"{p.name} is over the {MAX_MEMBER_BYTES} byte limit")
+    return data

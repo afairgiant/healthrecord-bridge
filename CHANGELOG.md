@@ -37,6 +37,14 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- Input size limits: a zip with more than 10,000 XML documents (`xdm.MAX_DOCUMENTS`) or more
+  than 1 GB of XML uncompressed (`xdm.MAX_TOTAL_BYTES`) is refused before anything is
+  extracted, and a bare XML file over 256 MB is refused like an oversized zip member. This
+  covers `hrb anonymize` and `hrb synthesize` input as well.
+- Python 3.14 is tested in CI and listed as supported.
+- Type checking with mypy (and `types-lxml`) in CI.
+- Dependabot for `uv.lock` and GitHub Actions. Actions are pinned to commit SHAs, including
+  the PyPI publish action in the job that holds `id-token: write`.
 - Anonymize report fields `dates_in_text_shifted`, `binary_payloads_removed` and
   `non_xml_body` (`null`, `"file"` when an embedded-file body was replaced, or `"text"`).
 

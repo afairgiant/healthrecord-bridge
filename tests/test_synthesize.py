@@ -77,7 +77,7 @@ SPECIALTY = b"""
           <code code="207R00000X" codeSystem="2.16.840.1.113883.6.101"
               displayName="Internal Medicine">
             <originalText>Internal Medicine</originalText>
-            <translation code="17" codeSystem="1.2.840.114350.1.13.362.2.7.10.836982.1050"
+            <translation code="17" codeSystem="1.2.840.114350.1.13.999.2.7.10.836982.1050"
                 displayName="Internal Medicine"/>
           </code>
         </assignedEntity>

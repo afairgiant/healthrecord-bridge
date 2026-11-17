@@ -8,7 +8,7 @@ import zipfile
 import pytest
 
 from conftest import HANDWRITTEN, XDM_SOURCE_XML, XDM_ZIP, by_type
-from healthrecord_bridge.ccda import NoDocumentsFoundError, convert
+from healthrecord_bridge.ccda import NoDocumentsFoundError, convert, xdm
 from healthrecord_bridge.ccda.xdm import iter_xml_members
 
 
@@ -60,3 +60,41 @@ def test_zip_without_xml_is_rejected(tmp_path):
         zf.writestr("INDEX.HTM", "<html/>")
     with pytest.raises(NoDocumentsFoundError):
         convert(path)
+
+
+def _two_document_zip(tmp_path):
+    path = tmp_path / "two.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("a.xml", HANDWRITTEN.read_bytes())
+        zf.writestr("b.xml", HANDWRITTEN.read_bytes())
+    return path
+
+
+@pytest.mark.parametrize(
+    ("limit", "value", "message"),
+    [
+        ("MAX_DOCUMENTS", 1, "2 XML documents, over the 1 limit"),
+        ("MAX_TOTAL_BYTES", 1000, "bytes of XML, over the 1000 byte limit"),
+        ("MAX_MEMBER_BYTES", 1000, r"a.xml is"),
+    ],
+)
+def test_zip_limits_are_checked_before_extraction(tmp_path, monkeypatch, limit, value, message):
+    path = _two_document_zip(tmp_path)
+    monkeypatch.setattr(xdm, limit, value)
+    opened = []
+    monkeypatch.setattr(zipfile.ZipFile, "open", lambda *a, **k: opened.append(a))
+    with pytest.raises(ValueError, match=message):
+        list(xdm.iter_documents(path))
+    assert not opened  # nothing was decompressed
+
+
+def test_bare_xml_file_has_the_same_size_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(xdm, "MAX_MEMBER_BYTES", 1000)
+    with pytest.raises(ValueError, match=r"record.xml is over the 1000 byte limit"):
+        convert(_copy(tmp_path))
+
+
+def _copy(tmp_path):
+    path = tmp_path / "record.xml"
+    path.write_bytes(HANDWRITTEN.read_bytes())
+    return path
