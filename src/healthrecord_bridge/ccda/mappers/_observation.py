@@ -37,6 +37,18 @@ _STATUS = {
     "new": "registered",
 }
 _INTERPRETATION = "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation"
+# Displays from the v3-ObservationInterpretation code system, for codes sent without one.
+_INTERPRETATION_DISPLAY = {
+    "N": "Normal",
+    "A": "Abnormal",
+    "AA": "Critical abnormal",
+    "H": "High",
+    "HH": "Critical high",
+    "L": "Low",
+    "LL": "Critical low",
+    "POS": "Positive",
+    "NEG": "Negative",
+}
 _DATA_ABSENT = "http://terminology.hl7.org/CodeSystem/data-absent-reason"
 
 
@@ -193,15 +205,24 @@ def _reference_ranges(ctx: Context, obs: etree._Element) -> list[dict]:
         text = ctx.entry_text(orange)
         if text:
             entry["text"] = text
-        interp = ctx.concept(child(orange, "interpretationCode"))
-        if interp and "low" not in entry and "high" not in entry and "text" not in entry:
-            entry["text"] = concept_text(interp) or ""
-        if entry:
+        interp = _interpretation(ctx, child(orange, "interpretationCode"))
+        if not entry and (label := _interpretation_label(interp)):
+            entry["text"] = label
+        if entry:  # ref-1 needs low, high or (non-empty) text; otherwise leave the range out
             out.append(entry)
     return out
 
 
-def _interpretation(ctx: Context, el: etree._Element) -> dict | None:
+def _interpretation_label(cc: dict | None) -> str | None:
+    if label := concept_text(cc):
+        return label
+    for c in (cc or {}).get("coding", []):
+        if c.get("system") == _INTERPRETATION and c.get("code") in _INTERPRETATION_DISPLAY:
+            return _INTERPRETATION_DISPLAY[c["code"]]
+    return None
+
+
+def _interpretation(ctx: Context, el: etree._Element | None) -> dict | None:
     cc = ctx.concept(el)
     if cc is None:
         return None

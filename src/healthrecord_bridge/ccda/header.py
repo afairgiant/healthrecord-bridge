@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
+
 from lxml import etree
 
 from .codes import simple_concept
@@ -301,7 +304,7 @@ def map_document_reference(ctx: Context, custodian: dict | None) -> dict:
         )
     ]
     res["subject"] = ctx.patient_ref
-    date = to_instant(doc.effective_time, ctx.assume_tz or "Z")
+    date = _document_instant(ctx)
     if date:
         res["date"] = date
     author = doc.author_display()
@@ -321,8 +324,35 @@ def map_document_reference(ctx: Context, custodian: dict | None) -> dict:
     return res
 
 
-def map_provenance(ctx: Context, targets: list[dict]) -> dict:
+_LEAP_SECOND = re.compile(r"(T\d\d:\d\d:)60")
+
+
+def _document_instant(ctx: Context) -> str | None:
+    """When the document was made: its ``effectiveTime``, else the latest header author time."""
+    tz = ctx.assume_tz or "Z"
     doc = ctx.doc
+    if instant := to_instant(doc.effective_time, tz):
+        return instant
+    times = [t for a in doc.authors if (t := to_instant(attr(child(a, "time"), "value"), tz))]
+    # Compared as datetimes: raw TS strings with different offsets do not sort by time.
+    return max(times, key=_as_datetime, default=None)
+
+
+def _as_datetime(instant: str) -> datetime:
+    # A leap second (:60) is a valid instant but not a valid datetime.
+    return datetime.fromisoformat(_LEAP_SECOND.sub(r"\g<1>59", instant))
+
+
+def map_provenance(ctx: Context, targets: list[dict]) -> dict | None:
+    """Provenance for the document, or ``None`` when it carries no time at all.
+
+    ``recorded`` is 1..1, and without a document or author time there is no truthful value,
+    so no Provenance is made rather than one with an invented date.
+    """
+    doc = ctx.doc
+    recorded = _document_instant(ctx)
+    if recorded is None:
+        return None
     res: dict = {
         "resourceType": "Provenance",
         "id": resource_id("Provenance", doc.id),
@@ -332,8 +362,7 @@ def map_provenance(ctx: Context, targets: list[dict]) -> dict:
     period = ctx.period(child(doc.service_event, "effectiveTime"))
     if period:
         res["occurredPeriod"] = period
-    recorded = to_instant(doc.effective_time, ctx.assume_tz or "Z")
-    res["recorded"] = recorded or "1970-01-01T00:00:00Z"
+    res["recorded"] = recorded
     agent: dict = {
         "type": simple_concept(
             "http://terminology.hl7.org/CodeSystem/provenance-participant-type",

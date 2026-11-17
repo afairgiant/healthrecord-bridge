@@ -41,6 +41,7 @@ DOCUMENT = """<?xml version="1.0" encoding="UTF-8"?>
 ENCOUNTERS = "46240-8"
 RESULTS = "30954-2"
 MEDICATIONS = "10160-0"
+PROBLEMS = "11450-4"
 DISCHARGED_HOME = 'code="01" codeSystem="2.16.840.1.113883.12.112" displayName="Discharged home"'
 
 
@@ -280,3 +281,148 @@ def test_impossible_timestamps_are_noted_in_the_report():
     notes = report.documents[0].notes
     assert any("impossible day or UTC offset" in n for n in notes)
     assert not any("assume_timezone" in n for n in notes)
+
+
+# ---- issue 11: FHIR validity -----------------------------------------------------------------
+
+
+def problem(
+    effective: str, status: str | None, *, act_status: str = "active", act_effective: str = ""
+) -> str:
+    """A Problem Concern Act; ``effective`` is the observation's effectiveTime content, or the
+    whole element when it starts with ``<effectiveTime``."""
+    if not effective.startswith("<effectiveTime"):
+        effective = f"<effectiveTime>{effective}</effectiveTime>"
+    status_obs = (
+        '<entryRelationship typeCode="REFR"><observation classCode="OBS" moodCode="EVN">'
+        '<templateId root="2.16.840.1.113883.10.20.22.4.6"/>'
+        '<code code="33999-4" codeSystem="2.16.840.1.113883.6.1"/><statusCode code="completed"/>'
+        f'<value xsi:type="CD" code="{status}" codeSystem="2.16.840.1.113883.6.96"/>'
+        "</observation></entryRelationship>"
+        if status
+        else ""
+    )
+    return (
+        '<entry><act classCode="ACT" moodCode="EVN">'
+        '<templateId root="2.16.840.1.113883.10.20.22.4.3"/><id root="9.9" extension="ACT-1"/>'
+        f'<code code="CONC" codeSystem="2.16.840.1.113883.5.6"/><statusCode code="{act_status}"/>'
+        f"{act_effective}"
+        '<entryRelationship typeCode="SUBJ"><observation classCode="OBS" moodCode="EVN">'
+        '<templateId root="2.16.840.1.113883.10.20.22.4.4"/><id root="9.9" extension="OBS-1"/>'
+        '<code code="55607006" codeSystem="2.16.840.1.113883.6.96"/>'
+        f'<statusCode code="completed"/>{effective}'
+        '<value xsi:type="CD" code="38341003" codeSystem="2.16.840.1.113883.6.96"/>'
+        f"{status_obs}</observation></entryRelationship></act></entry>"
+    )
+
+
+ACTIVE, INACTIVE = "55561003", "73425007"
+
+
+@pytest.mark.parametrize(
+    ("effective", "status", "clinical", "abatement"),
+    [
+        # con-4: an abated condition cannot be active; C-CDA says high means resolved.
+        ('<low value="20200101"/><high value="20230601"/>', ACTIVE, "resolved", "2023-06-01"),
+        ('<low value="20200101"/><high nullFlavor="UNK"/>', ACTIVE, "resolved", None),
+        ('<low value="20200101"/><high value="20230601"/>', None, "resolved", "2023-06-01"),
+        # An explicit inactive status already satisfies con-4 and is kept.
+        ('<low value="20200101"/><high value="20230601"/>', INACTIVE, "inactive", "2023-06-01"),
+        # No high: the status stands.
+        ('<low value="20200101"/>', ACTIVE, "active", None),
+        ('<low value="20200101"/><high nullFlavor="NI"/>', ACTIVE, "active", None),
+    ],
+)
+def test_condition_clinical_status_agrees_with_abatement(effective, status, clinical, abatement):
+    (cond,) = by_type(convert(PROBLEMS, problem(effective, status)))["Condition"]
+    assert cond["clinicalStatus"]["coding"][0]["code"] == clinical
+    assert cond.get("abatementDateTime") == abatement
+
+
+def test_resolution_date_outranks_the_act_status_code():
+    entry = problem('<low value="20200101"/><high value="20230601"/>', None, act_status="suspended")
+    (cond,) = by_type(convert(PROBLEMS, entry))["Condition"]
+    assert cond["clinicalStatus"]["coding"][0]["code"] == "resolved"
+
+
+@pytest.mark.parametrize("act_high", ['<high nullFlavor="UNK"/>', '<high value="20240101"/>'])
+def test_concern_act_end_is_not_the_problem_resolution(act_high):
+    entry = problem(
+        '<effectiveTime nullFlavor="UNK"/>',
+        ACTIVE,
+        act_effective=f'<effectiveTime><low value="20200101"/>{act_high}</effectiveTime>',
+    )
+    (cond,) = by_type(convert(PROBLEMS, entry))["Condition"]
+    assert cond["clinicalStatus"]["coding"][0]["code"] == "active"
+    assert cond["onsetDateTime"] == "2020-01-01"  # the act still supplies the onset
+    assert "abatementDateTime" not in cond
+
+
+@pytest.mark.parametrize(
+    ("interpretation", "expected"),
+    [
+        ('code="N" codeSystem="2.16.840.1.113883.5.83"', [{"text": "Normal"}]),
+        ('code="HH" codeSystem="2.16.840.1.113883.5.83"', [{"text": "Critical high"}]),
+        ('code="N" codeSystem="2.16.840.1.113883.5.83" displayName="Nml"', [{"text": "Nml"}]),
+        # No label to give: ref-1 needs low, high or text, and "" is not a FHIR string.
+        ('code="N" codeSystem="1.2.3.4.5"', None),
+    ],
+)
+def test_reference_range_with_only_an_interpretation(interpretation, expected):
+    entry = lab(
+        '<value xsi:type="PQ" value="5" unit="mg/dL"/><referenceRange><observationRange>'
+        f"<interpretationCode {interpretation}/></observationRange></referenceRange>"
+    )
+    (obs,) = by_type(convert(RESULTS, entry))["Observation"]
+    assert obs.get("referenceRange") == expected
+
+
+def without_effective_time(author: str = "", effective: str = "") -> bytes:
+    data = DOCUMENT.format(section=RESULTS, entries=lab(""))
+    line = '  <effectiveTime value="20260301"/>\n'
+    return data.replace(line, effective + author, 1).encode("utf-8")
+
+
+def header_author(time: str, root: str = "9.9") -> str:
+    return (
+        f'<author><time value="{time}"/>'
+        f'<assignedAuthor><id root="{root}"/></assignedAuthor></author>'
+    )
+
+
+def test_document_time_falls_back_to_the_latest_author_time():
+    # As text "20250315" sorts last, but 23:00 at -05:00 is 04:00 UTC on the 15th.
+    author = header_author("20250315") + header_author("20250314230000-0500", "9.8")
+    bundle, _ = convert_bytes(without_effective_time(author), "snippet.xml")
+    resources = by_type(bundle)
+    (prov,) = resources["Provenance"]
+    (doc_ref,) = resources["DocumentReference"]
+    assert prov["recorded"] == doc_ref["date"] == "2025-03-14T23:00:00-05:00"
+
+
+def test_provenance_is_not_invented_without_any_time():
+    bundle, report = convert_bytes(without_effective_time(), "snippet.xml")
+    assert "Provenance" not in by_type(bundle)
+    assert "1970" not in json.dumps(bundle)
+    assert any("no usable effectiveTime" in n for n in report.documents[0].notes)
+
+
+@pytest.mark.parametrize(
+    ("effective", "author", "expected"),
+    [
+        # A leap second is a valid instant; comparing it must not crash.
+        ("", "20250314235960-0500", "2025-03-14T23:59:60-05:00"),
+        # An impossible effectiveTime is not padded into an instant; the author time is real.
+        (
+            '  <effectiveTime value="20240231"/>\n',
+            "20240229103000-0500",
+            "2024-02-29T10:30:00-05:00",
+        ),
+        ('  <effectiveTime value="20250314230000+9999"/>\n', "20250101", "2025-01-01T00:00:00Z"),
+    ],
+)
+def test_document_time_edge_cases(effective, author, expected):
+    data = without_effective_time(header_author(author), effective)
+    bundle, _ = convert_bytes(data, "snippet.xml")
+    (prov,) = by_type(bundle)["Provenance"]
+    assert prov["recorded"] == expected
