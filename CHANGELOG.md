@@ -8,6 +8,8 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- The project moved to `afairgiant/healthrecord-bridge`: the package's Homepage, Issues and
+  Changelog URLs point there, and Alex Fair is listed as maintainer.
 - Patient: the US Core `birthsex` extension is no longer derived from
   `administrativeGenderCode`, which is a different data element. It comes from the Birth
   Sex Observation (template `2.16.840.1.113883.10.20.22.4.200`, LOINC `76689-9`) when the
