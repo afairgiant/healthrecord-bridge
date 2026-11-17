@@ -74,6 +74,25 @@ All notable changes to this project are recorded here. The format follows
   such as `+9999` or `+1430`) produced invalid FHIR dateTimes. They are now kept only at
   the precision before the impossible part (`2024-02`, or the date without its time), and
   the conversion report counts them. `assume_timezone` rejects such offsets.
+- Condition: a problem whose status said active but whose `effectiveTime/high` was set came
+  out with `clinicalStatus` `active` next to an `abatementDateTime`, which FHIR rule con-4
+  forbids. C-CDA makes `effectiveTime` the definitive indication and a `high` mean resolved,
+  so the status is now `resolved` when the problem observation's `high` is present (a date,
+  or `nullFlavor="UNK"` for "resolved, date unknown"). An explicit inactive or remission
+  status from a Problem Status observation is kept.
+- Condition: when the problem observation had no usable `effectiveTime`, the concern act's
+  `high` became `abatementDateTime`. That is when the concern stopped being tracked, not
+  when the problem resolved, so it is no longer used for abatement (the act still supplies
+  the onset).
+- Observation: a reference range with only an interpretation code that has no display name
+  was written with `"text": ""`. FHIR strings are never empty, and ref-1 needs a low, high
+  or text. Standard interpretation codes (`N`, `H`, `LL`, ...) now get their display from
+  the code system ("Normal"), and a range with no label at all is left out.
+- Provenance: `recorded` fell back to `1970-01-01T00:00:00Z` when the document had no
+  `effectiveTime`. It now falls back to the latest header author time (as does
+  `DocumentReference.date`, which was left out), and when there is no usable time at all
+  the Provenance is left out (`recorded` is required) and the report says so. An impossible
+  `effectiveTime` (`20240231`) is no longer padded into an instant.
 - `hrb --version` and `healthrecord_bridge.__version__` read the installed package version
   instead of a hardcoded string that had fallen behind (0.2.1 reported 0.2.0). The release
   workflow now fails when the pushed tag does not match the `pyproject.toml` version.

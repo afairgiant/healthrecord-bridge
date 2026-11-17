@@ -22,6 +22,7 @@ _STATUS_VALUES = {
     "246455001": "recurrence",  # recurrence
     "277022003": "remission",
 }
+_ABATED = frozenset({"inactive", "resolved", "remission"})  # statuses con-4 allows with abatement
 _VERIFICATION = "http://terminology.hl7.org/CodeSystem/condition-ver-status"
 
 
@@ -70,18 +71,22 @@ def _condition(
     id_source = obs if ctx.ids_of(obs) else act
     res = ctx.new_resource("Condition", id_source, section_code, ordinal, sub)
     res["subject"] = ctx.patient_ref
-    clinical = _clinical_status(act, obs)
+    obs_eff = child(obs, "effectiveTime")
+    eff = obs_eff
+    if eff is None or attr(eff, "nullFlavor"):
+        eff = child(act, "effectiveTime")  # onset only: see below
+    # Resolution comes from the Problem Observation alone. The concern act's high is when
+    # the concern stopped being tracked, not when the problem resolved.
+    high = find(obs_eff, "c:high")
+    clinical = _clinical_status(act, obs, high)
     if clinical:
         res["clinicalStatus"] = simple_concept(CONDITION_CLINICAL, clinical, clinical.capitalize())
     if negated(obs):
         res["verificationStatus"] = simple_concept(_VERIFICATION, "refuted", "Refuted")
     res["category"] = [simple_concept(CONDITION_CATEGORY, "problem-list-item", "Problem List Item")]
     res["code"] = code
-    eff = child(obs, "effectiveTime")
-    if eff is None or attr(eff, "nullFlavor"):
-        eff = child(act, "effectiveTime")
     onset = ctx.ts_value(find(eff, "c:low")) or ctx.ts_value(eff)
-    abatement = ctx.ts_value(find(eff, "c:high"))
+    abatement = ctx.ts_value(high)
     if onset:
         res["onsetDateTime"] = onset
     if abatement:
@@ -94,17 +99,32 @@ def _condition(
     return res
 
 
-def _clinical_status(act: etree._Element, obs: etree._Element) -> str | None:
+def _clinical_status(
+    act: etree._Element, obs: etree._Element, high: etree._Element | None
+) -> str | None:
+    """The problem's clinical status, consistent with its abatement (FHIR con-4).
+
+    C-CDA: effectiveTime "is the definitive indication of whether or not the underlying
+    condition is inactive", and a ``high`` (a date, or ``nullFlavor="UNK"`` for "resolved,
+    date unknown") means resolved. Only a Problem Status observation that already allows
+    abatement (inactive, remission) is kept over it; a ``statusCode`` is not.
+    """
+    observed = _status_observation(act, obs)
+    if attr(high, "value") or attr(high, "nullFlavor") == "UNK":
+        return observed if observed in _ABATED else "resolved"
+    return observed or _from_status_code(act, obs)
+
+
+def _status_observation(act: etree._Element, obs: etree._Element) -> str | None:
     for st in related(obs, "REFR", "observation") + related(act, "REFR", "observation"):
         if has_template(st, PROBLEM_STATUS):
             code = attr(child(st, "value"), "code")
             if code in _STATUS_VALUES:
                 return _STATUS_VALUES[code]
-    eff = child(obs, "effectiveTime")
-    if eff is None or attr(eff, "nullFlavor"):
-        eff = child(act, "effectiveTime")
-    if attr(find(eff, "c:high"), "value"):
-        return "resolved"
+    return None
+
+
+def _from_status_code(act: etree._Element, obs: etree._Element) -> str | None:
     sc = status_code(act) or status_code(obs)
     if sc in {"active", "completed", "new"}:
         return "active"

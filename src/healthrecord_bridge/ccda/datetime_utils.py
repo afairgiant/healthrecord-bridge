@@ -107,11 +107,12 @@ def to_instant(raw: str | None, fallback_tz: str = "Z") -> str | None:
     """Coerce a TS to a FHIR ``instant`` (full date, time and offset).
 
     Missing time components are padded with zeros and a missing offset is filled
-    with ``fallback_tz``. Only used for the few fields FHIR declares as ``instant``
-    (``Provenance.recorded`` and ``DocumentReference.date``).
+    with ``fallback_tz``. ``None`` when the TS is impossible (a February 30, a +9999
+    offset): padding what is left would invent an instant. Only used for the few fields
+    FHIR declares as ``instant`` (``Provenance.recorded`` and ``DocumentReference.date``).
     """
     parsed = parse_ts(raw, fallback_tz)
-    if parsed is None:
+    if parsed is None or parsed.invalid:
         return None
     v = parsed.value
     if "T" in v:

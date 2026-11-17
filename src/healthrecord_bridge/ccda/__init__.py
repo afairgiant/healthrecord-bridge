@@ -85,7 +85,14 @@ def convert_document(
         resources.extend(produced)
 
     resources.append(map_document_reference(ctx, custodian))
-    resources.append(map_provenance(ctx, resources))
+    provenance = map_provenance(ctx, resources)
+    if provenance is not None:
+        resources.append(provenance)
+    else:
+        report.notes.append(
+            "the document has no usable effectiveTime or author time, so no Provenance was made "
+            "(Provenance.recorded is required)"
+        )
 
     report.unmapped_code_systems = sorted(ctx.unmapped)
     counts: dict[str, int] = {}
