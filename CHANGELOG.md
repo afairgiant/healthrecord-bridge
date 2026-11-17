@@ -6,6 +6,8 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-17
+
 ### Changed
 
 - Resource ids no longer depend on an entry's position (#12). Ids are now assigned after the
