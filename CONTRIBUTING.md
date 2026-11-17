@@ -13,10 +13,10 @@ Thanks for helping. A few ground rules keep this small project easy to maintain.
 
 ```sh
 uv sync --all-extras
-uv run ruff check . && uv run pytest
+uv run ruff check . && uv run mypy && uv run pytest
 ```
 
-Both must pass. `ruff format --check .` runs in CI too; `uv run ruff format .` fixes
+All three must pass. `ruff format --check .` runs in CI too; `uv run ruff format .` fixes
 formatting.
 
 ## Tests and fixtures

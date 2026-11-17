@@ -22,6 +22,7 @@ from .anonymize import SUBSTITUTES, AnonymizeReport, anonymize, keyed_hash, seed
 from .document import CdaDocument, Section, parse_xml
 from .mappers._shared import statement_of
 from .sections import KNOWN_UNMAPPED, find_spec
+from .xdm import read_xml_file
 from .xml import NSMAP, SDTC_NS, attr, child, children, find, local_name, q, text_of, xsi_type
 
 SNOMED = "2.16.840.1.113883.6.96"
@@ -981,7 +982,7 @@ def synthesize(xml_bytes: bytes, *, seed: str | None = None) -> tuple[bytes, Syn
 
 def synthesize_file(src: Path, dst: Path, seed: str | None = None) -> SynthesizeReport:
     """Synthesize one XML file into another."""
-    out, report = synthesize(Path(src).read_bytes(), seed=seed)
+    out, report = synthesize(read_xml_file(src), seed=seed)
     Path(dst).write_bytes(out)
     return report
 
@@ -1046,7 +1047,7 @@ class _Synthesizer:
                     gender.remove(ot)
             birth = child(patient, "birthTime")
             raw = attr(birth, "value")
-            if raw and len(raw) >= 4 and raw[:4].isdigit():
+            if birth is not None and raw and len(raw) >= 4 and raw[:4].isdigit():
                 base = latest if latest is not None else int(raw[:4])
                 year = base - self.rng.randint(25, 70)
                 rest = "0101" + raw[8:] if len(raw) >= 8 else raw[4:]
@@ -1567,17 +1568,18 @@ class _Synthesizer:
     ) -> _Row:
         value = child(obs, "value")
         kind = xsi_type(value) if value is not None else None
-        live = value is not None and attr(value, "nullFlavor") is None
+        # The value element when it holds a value, not a nullFlavor.
+        live = value if value is not None and attr(value, "nullFlavor") is None else None
         test = None
         extra: list[str] = []
-        if live and kind == "ST":
+        if live is not None and kind == "ST":
             loinc, display, text = self.rng.choice(LAB_TEXT)
-            _set_plain_text(value, self._emit(text))
+            _set_plain_text(live, self._emit(text))
             shown = text
-        elif live and kind in _CODED_TYPES:
+        elif live is not None and kind in _CODED_TYPES:
             loinc, display, vcode, vdisplay = self.rng.choice(LAB_CODED)
-            self._set_code(value, SNOMED, vcode, vdisplay)
-            ref = self._set_original_text(value, vdisplay)
+            self._set_code(live, SNOMED, vcode, vdisplay)
+            ref = self._set_original_text(live, vdisplay)
             if ref:
                 extra.append(ref)
             shown = vdisplay
@@ -1585,21 +1587,21 @@ class _Synthesizer:
             test = panel[index % len(panel)] if panel else self.rng.choice(LAB_TESTS)
             loinc, display, unit, low, high, decimals = test
             shown = ""
-            if live and attr(value, "value") is not None:
+            if live is not None and attr(live, "value") is not None:
                 number = self._draw(low, high, 0 if kind == "INT" else decimals)
-                value.set("value", number)
-                if kind == "PQ" or value.get("unit") is not None:
-                    value.set("unit", unit)
+                live.set("value", number)
+                if kind == "PQ" or live.get("unit") is not None:
+                    live.set("unit", unit)
                 shown = f"{number} {unit} (normal {_fmt(low, decimals)} - {_fmt(high, decimals)})"
-            elif live and kind == "IVL_PQ":
+            elif live is not None and kind == "IVL_PQ":
                 for local, bound in (("low", low), ("high", high)):
-                    b = child(value, local)
+                    b = child(live, local)
                     if b is not None and attr(b, "value") is not None:
                         b.set("value", _fmt(bound, decimals))
                         b.set("unit", unit)
                 shown = f"{_fmt(low, decimals)} - {_fmt(high, decimals)} {unit}"
-            elif live and text_of(value):
-                _set_plain_text(value, REMOVED)
+            elif live is not None and text_of(live):
+                _set_plain_text(live, REMOVED)
         code_el = child(obs, "code")
         ot_id = None
         if code_el is not None and attr(code_el, "code") is not None:
@@ -1929,7 +1931,8 @@ def _date(el: etree._Element | None) -> str:
 def _decimals(raw: str | None) -> int:
     if not raw or "." not in raw:
         return 0
-    return len(re.match(r"\d*", raw.split(".", 1)[1]).group(0))
+    fraction = raw.split(".", 1)[1]
+    return len(fraction) - len(fraction.lstrip("0123456789"))
 
 
 def _fmt(value: float, decimals: int) -> str:

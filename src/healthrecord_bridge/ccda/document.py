@@ -11,6 +11,7 @@ from lxml import etree
 from .errors import NotClinicalDocumentError, UnsafeXmlError
 from .ids import CdaId
 from .narrative import NarrativeIndex
+from .xdm import read_xml_file
 from .xml import HL7_NS, attr, child, child_text, children, find, findall, q
 
 CLINICAL_DOCUMENT = q("ClinicalDocument")
@@ -103,7 +104,7 @@ class CdaDocument:
     @classmethod
     def from_path(cls, path: str | os.PathLike[str]) -> CdaDocument:
         p = Path(path)
-        return cls.from_bytes(p.read_bytes(), p.name)
+        return cls.from_bytes(read_xml_file(p), p.name)
 
     # ---- header -----------------------------------------------------------------
 

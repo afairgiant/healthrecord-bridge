@@ -13,6 +13,7 @@ from Epic MyChart, or any zip with C-CDA XML inside). It returns a FHIR R4
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 from ..fhir.bundle import make_bundle, merge_bundles
@@ -149,7 +150,7 @@ def convert_many(
     return merge_bundles(bundles), ConversionReport(reports)
 
 
-def _iter_inputs(path: str | os.PathLike[str]):
+def _iter_inputs(path: str | os.PathLike[str]) -> Iterator[tuple[str, bytes]]:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(str(p))
@@ -161,4 +162,4 @@ def _iter_inputs(path: str | os.PathLike[str]):
         if not found:
             raise NoDocumentsFoundError(f"{p.name}: zip contains no XML documents")
     else:
-        yield p.name, p.read_bytes()
+        yield p.name, xdm.read_xml_file(p)

@@ -31,19 +31,19 @@ from healthrecord_bridge.ccda.anonymize import (
 from healthrecord_bridge.cli import main
 
 FIXTURES = [HANDWRITTEN, XDM_SOURCE_XML]
-EPIC_CUSTOMER = b"1.2.840.114350.1.13.362"
+EPIC_CUSTOMER = b"1.2.840.114350.1.13.999"
 PERFORMER = b"""
   <documentationOf>
     <serviceEvent classCode="PCPR">
       <performer typeCode="PRF">
         <assignedEntity>
           <id root="2.16.840.1.113883.4.6" extension="1234567893" assigningAuthorityName="NPI"/>
-          <id root="1.2.840.114350.1.13.362.2.7.8.688883.3677179739" assigningAuthorityName="EPIC"/>
-          <id root="1.2.840.114350.1.13.362.2.7.8.688883.2" assigningAuthorityName="EPC"/>
+          <id root="1.2.840.114350.1.13.999.2.7.8.688883.3677179739" assigningAuthorityName="EPIC"/>
+          <id root="1.2.840.114350.1.13.999.2.7.8.688883.2" assigningAuthorityName="EPC"/>
           <code code="207R00000X" codeSystem="2.16.840.1.113883.6.101">
             <originalText>Internal Medicine</originalText>
             <translation code="32" codeSystem="1.2.840.114350.1.72.1.7.7.10.688867.4160"/>
-            <translation code="17" codeSystem="1.2.840.114350.1.13.362.2.7.10.836982.1050"/>
+            <translation code="17" codeSystem="1.2.840.114350.1.13.999.2.7.10.836982.1050"/>
           </code>
           <addr nullFlavor="UNK"><city>Boston</city></addr>
           <telecom nullFlavor="UNK" value="tel:+1-617-555-0199"/>
@@ -292,14 +292,13 @@ def test_null_flavor_names_and_addresses_are_scrubbed():
 
 def test_epic_customer_oids_are_rewritten():
     data = with_performer(
-        b'<item ID="enc2">Order 1.2.840.114350.1.13.362.2.7.2.798268.1455851590 placed</item>'
+        b'<item ID="enc2">Order 1.2.840.114350.1.13.999.2.7.2.798268.1455851590 placed</item>'
     )
     out, report = anonymize(data, seed="s")
     text = out.decode("utf-8")
-    assert "114350.1.13.362" not in text and "114350.1.13.999" not in text
+    assert "114350.1.13.999" not in text
     assert "1.2.840.114350.1.72.1.7.7.10.688867.4160" in text
-    expected = data.count(EPIC_CUSTOMER) + data.count(b"1.2.840.114350.1.13.999")
-    assert report.oids_rewritten == expected
+    assert report.oids_rewritten == data.count(EPIC_CUSTOMER)
     root = etree.fromstring(out)
     assert root.find("c:id", NS).get("root") == "1.2.840.114350.1.13.0.2.7.8.688883.9999"
     entity = performer_entity(root)

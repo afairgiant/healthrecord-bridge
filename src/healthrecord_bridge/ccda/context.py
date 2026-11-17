@@ -135,7 +135,7 @@ class Context:
         """
         cda_ids = self.ids_of(el)
         parts = [str(p) for p in fallback_parts if p is not None]
-        if cda_ids:
+        if cda_ids and el is not None:
             owner = self.id_owners.setdefault((resource_type, cda_ids[0]), el)
             if owner is el:
                 rid = resource_id(resource_type, cda_ids[0])
